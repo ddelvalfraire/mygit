@@ -12,6 +12,7 @@
 
 #include "config.h"
 #include "error.h"
+#include "io.h"
 
 typedef struct
 {
@@ -35,7 +36,6 @@ typedef struct
 } blob_t;
 
 
-
 typedef struct
 {
     char hash[HASH_STR_SIZE];
@@ -50,14 +50,6 @@ typedef struct
     size_t count;
 } path_list_t;
 
-typedef enum
-{
-    FILE_TYPE_REGULAR,
-    FILE_TYPE_DIRECTORY,
-    FILE_TYPE_INVALID
-} file_type_t;
-
-void clear_terminal();
 void vcs_init();
 void vcs_status();
 vcs_error_t vcs_add(char **paths, size_t count);
@@ -81,11 +73,9 @@ vcs_error_t create_blob_path(const char *path, blob_t *blob);
 vcs_error_t save_blob(const blob_t *blob);
 vcs_error_t write_staged_file(staged_file_t **files_mp);
 vcs_error_t add_paths_recursively(const char *path, path_list_t *result);
-file_type_t get_file_type(const char *path);
+
 bool is_valid_path(const char *path);
 bool is_valid_branch_name(const char *name);
-bool file_exists(const char *path);
-const char *vcs_error_string(vcs_error_t err);
 
 // temporary function to parse add arguments
 vcs_error_t parse_add_args(const char *args, path_list_t *paths) 
@@ -818,11 +808,7 @@ vcs_error_t get_current_branch(char *buffer, size_t buffer_size)
 
 
 
-bool file_exists(const char *path)
-{
-    struct stat st;
-    return stat(path, &st) == 0;
-}
+
 
 void remove_newline(char *str)
 {
@@ -860,25 +846,3 @@ void trim(char *str)
     *(end + 1) = '\0';
 }
 
-file_type_t get_file_type(const char *path)
-{
-    struct stat st;
-    if (stat(path, &st) != 0)
-        return FILE_TYPE_INVALID;
-    if (S_ISREG(st.st_mode))
-        return FILE_TYPE_REGULAR;
-    if (S_ISDIR(st.st_mode))
-        return FILE_TYPE_DIRECTORY;
-    return FILE_TYPE_INVALID;
-}
-
-
-void clear_terminal()
-{
-// Use system commands to clear the terminal
-#ifdef _WIN32
-    system("cls"); // Windows
-#else
-    system("clear"); // Unix/Linux/Mac
-#endif
-}
