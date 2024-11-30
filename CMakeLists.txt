@@ -15,7 +15,10 @@ if(NOT UTHASH_INCLUDE_DIR)
 endif()
 
 # Add include directory
-include_directories(${UTHASH_INCLUDE_DIR})
+include_directories(
+    ${UTHASH_INCLUDE_DIR}
+    ${CMAKE_SOURCE_DIR}/include
+    )
 
 # Add executable
 add_executable(mygit src/main.c)
