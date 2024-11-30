@@ -20,5 +20,8 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/include
     )
 
+# Find all source files in src directory
+file(GLOB_RECURSE SOURCES "src/*.c")
+
 # Add executable
-add_executable(mygit src/main.c)
+add_executable(mygit ${SOURCES})
