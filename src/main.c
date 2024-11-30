@@ -22,6 +22,10 @@
 #define MAX_FILE_SIZE (2L * 1024 * 1024 * 1024)    // 2GB
 #define MAX_STAGING_SIZE (2L * 1024 * 1024 * 1024) // 2GB
 
+// temp
+#define MAX_DEPTH 10
+#define MAX_PATHS 256
+
 typedef struct
 {
     unsigned char raw[HASH_SIZE];
@@ -76,6 +80,13 @@ typedef struct
     size_t count;
 } path_list_t;
 
+typedef enum
+{
+    FILE_TYPE_REGULAR,
+    FILE_TYPE_DIRECTORY,
+    FILE_TYPE_INVALID
+} file_type_t;
+
 void clear_terminal();
 void vcs_init();
 void vcs_status();
@@ -99,78 +110,14 @@ vcs_error_t read_file_data(const char *path, blob_t *blob);
 vcs_error_t create_blob_path(const char *path, blob_t *blob);
 vcs_error_t save_blob(const blob_t *blob);
 vcs_error_t write_staged_file(staged_file_t **files_mp);
+vcs_error_t add_paths_recursively(const char *path, path_list_t *result);
+file_type_t get_file_type(const char *path);
 bool is_valid_path(const char *path);
 bool is_valid_branch_name(const char *name);
 bool file_exists(const char *path);
 const char *vcs_error_string(vcs_error_t err);
 
-// temp
-#define MAX_DEPTH 10
-#define MAX_PATHS 256
-
-// Helper function to validate and get file type
-typedef enum 
-{
-    FILE_TYPE_REGULAR,
-    FILE_TYPE_DIRECTORY,
-    FILE_TYPE_INVALID
-} file_type_t;
-
-static file_type_t get_file_type(const char *path) 
-{
-    struct stat st;
-    if (stat(path, &st) != 0) return FILE_TYPE_INVALID;
-    if (S_ISREG(st.st_mode)) return FILE_TYPE_REGULAR;
-    if (S_ISDIR(st.st_mode)) return FILE_TYPE_DIRECTORY;
-    return FILE_TYPE_INVALID;
-}
-
-vcs_error_t add_paths_recursively(const char *path, path_list_t *result) 
-{
-    if (!path || !result) return VCS_ERROR_NULL_INPUT;
-    if (result->count >= MAX_PATHS) return VCS_TOO_MANY_ARGUMENTS;
-
-    file_type_t type = get_file_type(path);
-    if (type == FILE_TYPE_INVALID) {
-        printf("Error: Invalid path '%s'\n", path);
-        return VCS_ERROR_FILE_DOES_NOT_EXIST;
-    }
-
-    if (type == FILE_TYPE_REGULAR) {
-        result->paths[result->count] = strdup(path);
-        if (!result->paths[result->count]) return VCS_ERROR_MEMORY_ALLOCATION_FAILED;
-        result->count++;
-        return VCS_OK;
-    }
-
-    // Handle directory
-    DIR *dir = opendir(path);
-    if (!dir) return VCS_ERROR_IO;
-
-    struct dirent *entry;
-    vcs_error_t err = VCS_OK;
-
-    while ((entry = readdir(dir)) != NULL && result->count < MAX_PATHS) {
-        if (strcmp(entry->d_name, ".") == 0 || 
-            strcmp(entry->d_name, "..") == 0 ||
-            strcmp(entry->d_name, ".vcs") == 0) {
-            continue;
-        }
-
-        char full_path[MAX_PATH_LENGTH];
-        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
-        
-        err = add_paths_recursively(full_path, result);
-        if (err != VCS_OK && err != VCS_TOO_MANY_ARGUMENTS) {
-            closedir(dir);
-            return err;
-        }
-    }
-
-    closedir(dir);
-    return err;
-}
-
+// temporary function to parse add arguments
 vcs_error_t parse_add_args(const char *args, path_list_t *paths) 
 {
     if (!args || !*args || !paths) return VCS_ERROR_NULL_INPUT;
@@ -197,20 +144,6 @@ vcs_error_t parse_add_args(const char *args, path_list_t *paths)
 
     free(input);
     return err;
-}
-
-void free_path_list(path_list_t *list)
-{
-    if (!list)
-    {
-        return;
-    }
-    for (size_t i = 0; i < list->count; i++)
-    {
-        free(list->paths[i]);
-    }
-    free(list->paths);
-    list->count = 0;
 }
 
 int main(void)
@@ -339,6 +272,75 @@ vcs_error_t vcs_add(char **paths, size_t count)
     }
 
     return err;
+}
+
+vcs_error_t add_paths_recursively(const char *path, path_list_t *result)
+{
+    if (!path || !result)
+        return VCS_ERROR_NULL_INPUT;
+    if (result->count >= MAX_PATHS)
+        return VCS_TOO_MANY_ARGUMENTS;
+
+    file_type_t type = get_file_type(path);
+    if (type == FILE_TYPE_INVALID)
+    {
+        printf("Error: Invalid path '%s'\n", path);
+        return VCS_ERROR_FILE_DOES_NOT_EXIST;
+    }
+
+    if (type == FILE_TYPE_REGULAR)
+    {
+        result->paths[result->count] = strdup(path);
+        if (!result->paths[result->count])
+            return VCS_ERROR_MEMORY_ALLOCATION_FAILED;
+        result->count++;
+        return VCS_OK;
+    }
+
+    // Handle directory
+    DIR *dir = opendir(path);
+    if (!dir)
+        return VCS_ERROR_IO;
+
+    struct dirent *entry;
+    vcs_error_t err = VCS_OK;
+
+    while ((entry = readdir(dir)) != NULL && result->count < MAX_PATHS)
+    {
+        if (strcmp(entry->d_name, ".") == 0 ||
+            strcmp(entry->d_name, "..") == 0 ||
+            strcmp(entry->d_name, ".vcs") == 0)
+        {
+            continue;
+        }
+
+        char full_path[MAX_PATH_LENGTH];
+        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+
+        err = add_paths_recursively(full_path, result);
+        if (err != VCS_OK && err != VCS_TOO_MANY_ARGUMENTS)
+        {
+            closedir(dir);
+            return err;
+        }
+    }
+
+    closedir(dir);
+    return err;
+}
+
+void free_path_list(path_list_t *list)
+{
+    if (!list)
+    {
+        return;
+    }
+    for (size_t i = 0; i < list->count; i++)
+    {
+        free(list->paths[i]);
+    }
+    free(list->paths);
+    list->count = 0;
 }
 
 vcs_error_t write_staged_file(staged_file_t **files_mp)
@@ -924,6 +926,19 @@ void trim(char *str)
         end--;
     *(end + 1) = '\0';
 }
+
+file_type_t get_file_type(const char *path)
+{
+    struct stat st;
+    if (stat(path, &st) != 0)
+        return FILE_TYPE_INVALID;
+    if (S_ISREG(st.st_mode))
+        return FILE_TYPE_REGULAR;
+    if (S_ISDIR(st.st_mode))
+        return FILE_TYPE_DIRECTORY;
+    return FILE_TYPE_INVALID;
+}
+
 
 void clear_terminal()
 {
