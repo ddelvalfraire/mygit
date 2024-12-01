@@ -332,6 +332,11 @@ vcs_error_t object_write(vcs_object_t *obj)
 
         free(content);
     }
+    
+    err = compress_file_inplace(obj->path.path);
+    if (is_error(err))
+        return err;
+
     return VCS_OK;
 }
 
