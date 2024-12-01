@@ -172,7 +172,7 @@ vcs_error_t vcs_add(UT_array *filepaths)
         blob_object_t *blob_data = (blob_object_t *)blob.data;
         strncpy(blob_data->src_path, filepath, MAX_PATH_LENGTH - 1);
 
-        unsigned char hash[HASH_SIZE];
+        char hash[HEX_STR_SIZE];
         err = sha256_hash_file(filepath, hash);
         if (err != VCS_OK)
         {

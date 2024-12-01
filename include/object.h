@@ -6,19 +6,21 @@
 #include "config.h"
 #include "error.h"
 
-
 typedef enum
 {
     OBJECT_TYPE_BLOB,
     OBJECT_TYPE_TREE,
     OBJECT_TYPE_COMMIT,
-    OBJECT_TYPE_TAG
+    OBJECT_TYPE_TAG,
+    OBJECT_TYPE_UNKNOWN
 } object_type_t;
 
-typedef struct 
+typedef struct
 {
     char name[MAX_AUTHOR_NAME_SIZE];
     char email[MAX_AUTHOR_EMAIL_SIZE];
+    time_t timestamp;
+    int32_t tz_offset; 
 } author_t;
 
 typedef struct
@@ -31,8 +33,8 @@ typedef struct
 // Tree entry for directory listings
 typedef struct
 {
-    char mode[7];  
-    char hash[HASH_SIZE]; 
+    char mode[7];
+    char hash[HEX_STR_SIZE];
     char name[256];
 } tree_entry_t;
 
@@ -41,9 +43,9 @@ typedef struct
 {
     object_type_t type;
     size_t size;
-    char hash[HASH_SIZE];
+    char hash[HEX_STR_SIZE];
     object_path_t path;
-    void *data; 
+    void *data;
 } vcs_object_t;
 
 // Specific object types
@@ -63,26 +65,27 @@ typedef struct
 typedef struct
 {
     vcs_object_t header;
-    char tree[HASH_SIZE];       
-    char parent[HASH_SIZE];    
+    char tree[HEX_STR_SIZE];
+    char parent[HEX_STR_SIZE];
     author_t author;
     author_t committer;
-    char *message;       
+    char *message;
 } commit_object_t;
 
 typedef struct
 {
     vcs_object_t header;
     object_type_t type;
-    char ref[HASH_SIZE];  
-    char tag[128];   
+    char ref[HEX_STR_SIZE];
+    char tag[128];
     author_t tagger;
-    char *message;   
+    char *message;
 } tag_object_t;
 
 vcs_error_t object_init(vcs_object_t *obj, object_type_t type);
-vcs_error_t object_read(const unsigned char *hash, vcs_object_t *obj);
+vcs_error_t object_read(const char *hash, vcs_object_t *obj);
 vcs_error_t object_write(vcs_object_t *obj);
+vcs_error_t object_from_file(const char *path, vcs_object_t *obj);
 void object_free(vcs_object_t *obj);
 
 #endif // OBJECT_H

@@ -6,7 +6,7 @@
 #include "hash.h"
 #include "config.h"
 
-vcs_error_t sha256_hash(const void *data, size_t size, unsigned char *hash_out) {
+vcs_error_t sha256_hash(const void *data, size_t size, char *hash_out) {
     if (!data || !hash_out) {
         return VCS_ERROR_NULL_INPUT;
     }
@@ -16,15 +16,17 @@ vcs_error_t sha256_hash(const void *data, size_t size, unsigned char *hash_out) 
         return VCS_ERROR_MEMORY_ALLOCATION_FAILED;
     }
 
+    unsigned char hash[HASH_SIZE];
     if (!EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) ||
         !EVP_DigestUpdate(ctx, data, size) ||
-        !EVP_DigestFinal_ex(ctx, hash_out, NULL)) {
+        !EVP_DigestFinal_ex(ctx, hash, NULL)) {
         EVP_MD_CTX_free(ctx);
         return VCS_ERROR_HASH_FAILED;
     }
 
+    vcs_error_t err = sha256_hash_to_hex(hash, hash_out);
     EVP_MD_CTX_free(ctx);
-    return VCS_OK;
+    return err;
 }
 
 static vcs_error_t validate_file_size(FILE *file) {
@@ -44,7 +46,7 @@ static vcs_error_t validate_file_size(FILE *file) {
     return VCS_OK;
 }
 
-vcs_error_t sha256_hash_file(const char *filepath, unsigned char *hash_out) {
+vcs_error_t sha256_hash_file(const char *filepath, char *hash_out) {
     if (!filepath || !hash_out) {
         return VCS_ERROR_NULL_INPUT;
     }
@@ -88,15 +90,18 @@ vcs_error_t sha256_hash_file(const char *filepath, unsigned char *hash_out) {
         return VCS_ERROR_IO;
     }
 
-    if (!EVP_DigestFinal_ex(ctx, hash_out, NULL)) {
+    unsigned char hash[HASH_SIZE];
+    if (!EVP_DigestFinal_ex(ctx, hash, NULL)) {
         EVP_MD_CTX_free(ctx);
         fclose(file);
         return VCS_ERROR_HASH_FAILED;
     }
 
+    err = sha256_hash_to_hex(hash, hash_out);
+
     EVP_MD_CTX_free(ctx);
     fclose(file);
-    return VCS_OK;
+    return err;
 }
 
 vcs_error_t sha256_hash_to_hex(const unsigned char *hash, char *hex_out) {

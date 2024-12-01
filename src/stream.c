@@ -48,8 +48,11 @@ vcs_error_t stream_reader_init(stream_reader_t *reader, const char *filepath, si
 {
     if (!reader || !filepath)
         return VCS_ERROR_NULL_INPUT;
-    if (reader->is_initialized)
-        return VCS_STREAM_READER_NOT_INITIALIZED;
+
+    vcs_error_t err = stream_reader_create(&reader);
+
+    if (is_error(err))
+        return err;
 
     pthread_mutex_lock(&reader->mutex);
 
@@ -73,8 +76,8 @@ vcs_error_t stream_reader_init(stream_reader_t *reader, const char *filepath, si
         return VCS_ERROR_FILE_OPEN;
     }
 
-    vcs_error_t err = initialize_zlib_stream(reader);
-    if (err != VCS_OK)
+    err = initialize_zlib_stream(reader);
+    if (is_error(err))
     {
         stream_reader_close(reader);
         pthread_mutex_unlock(&reader->mutex);

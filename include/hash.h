@@ -5,9 +5,9 @@
 
 #include "error.h" 
 
-vcs_error_t sha256_hash(const void* data, size_t size, unsigned char* hash_out);
+vcs_error_t sha256_hash(const void* data, size_t size,  char* hash_out);
 
-vcs_error_t sha256_hash_file(const char* filepath, unsigned char* hash_out);
+vcs_error_t sha256_hash_file(const char* filepath,  char* hash_out);
 
 vcs_error_t sha256_hash_to_hex(const unsigned char *hash, char *hex_out);
 

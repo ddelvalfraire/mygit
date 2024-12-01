@@ -131,7 +131,7 @@ vcs_error_t staging_save(staging_area_t *staging)
     return VCS_OK;
 }
 
-vcs_error_t staging_add_entry(staging_area_t *staging, const char *path, const unsigned char *hash)
+vcs_error_t staging_add_entry(staging_area_t *staging, const char *path, const  char *hash)
 {
     if (!staging || !path || !hash)
         return VCS_ERROR_NULL_INPUT;
@@ -148,7 +148,7 @@ vcs_error_t staging_add_entry(staging_area_t *staging, const char *path, const u
         staging->count++;
     }
 
-    memcpy(entry->hash, hash, HASH_SIZE);
+    memcpy(entry->hash, hash, HEX_STR_SIZE);
 
     vcs_error_t err = get_file_metadata(path, entry);
     if (err != VCS_OK)
@@ -208,7 +208,7 @@ void staging_clear(staging_area_t *staging)
     staging->is_dirty = true;
 }
 
-vcs_error_t staging_compute_blob_hash(const char *path, uint8_t *hash)
+vcs_error_t staging_compute_blob_hash(const char *path, char *hash)
 {
     if (!path || !hash)
         return VCS_ERROR_NULL_INPUT;
