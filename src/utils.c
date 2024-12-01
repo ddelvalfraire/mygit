@@ -3,6 +3,7 @@
 
 #include "utils.h"
 
+
 void remove_newline(char *str)
 {
     if (!str)

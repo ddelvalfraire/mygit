@@ -9,88 +9,40 @@
 #include <time.h>
 #include <dirent.h>
 #include <uthash.h>
+#include <utarray.h>
 
 #include "config.h"
 #include "error.h"
 #include "io.h"
 #include "utils.h"
-
-typedef struct
-{
-    unsigned char raw[HASH_SIZE];
-    char hex[HASH_STR_SIZE];
-} hash_t;
-
-typedef struct
-{
-    char dir[3];
-    char filename[39];
-    char path[MAX_PATH_LENGTH];
-} blob_path_t;
-
-typedef struct
-{
-    hash_t hash;
-    blob_path_t path;
-    uint8_t *data;
-    size_t size;
-} blob_t;
-
-
-typedef struct
-{
-    char hash[HASH_STR_SIZE];
-    char filepath[MAX_PATH_LENGTH];
-    UT_hash_handle hh;
-
-} staged_file_t;
-
-typedef struct
-{
-    char **paths;
-    size_t count;
-} path_list_t;
+#include "tree_walk.h"
+#include "staging.h"
+#include "object.h"
+#include "hash.h"
 
 void vcs_init();
 void vcs_status();
-vcs_error_t vcs_add(char **paths, size_t count);
+vcs_error_t vcs_add(UT_array *filepaths);
 vcs_error_t create_branch(const char *name);
 vcs_error_t checkout_branch(const char *name);
 
 // utils
 void trim(char *str);
 void remove_newline(char *str);
-void free_staged_files(staged_file_t **files_mp);
-void free_path_list(path_list_t *list);
 vcs_error_t initialize_master_branch();
 vcs_error_t get_current_branch(char *buffer, size_t buffer_size);
-vcs_error_t hash_to_hex(const unsigned char *hash, char *hex, size_t hex_size);
-vcs_error_t hash_content(const uint8_t *data, size_t size, hash_t *hash);
-vcs_error_t load_staged_files(staged_file_t **files);
-vcs_error_t create_blob(const char *filepath, blob_t *blob);
-vcs_error_t upsert_staged_file(staged_file_t **files, const char *hash, const char *filepath);
-vcs_error_t read_file_data(const char *path, blob_t *blob);
-vcs_error_t create_blob_path(const char *path, blob_t *blob);
-vcs_error_t save_blob(const blob_t *blob);
-vcs_error_t write_staged_file(staged_file_t **files_mp);
-vcs_error_t add_paths_recursively(const char *path, path_list_t *result);
-
-bool is_valid_path(const char *path);
 bool is_valid_branch_name(const char *name);
+bool is_initialized();
 
 // temporary function to parse add arguments
-vcs_error_t parse_add_args(const char *args, path_list_t *paths) 
+vcs_error_t parse_add_args(const char *args, UT_array *filepaths)
 {
-    if (!args || !*args || !paths) return VCS_ERROR_NULL_INPUT;
-
-    paths->paths = malloc(MAX_PATHS * sizeof(char *));
-
-    if (!paths->paths) return VCS_ERROR_MEMORY_ALLOCATION_FAILED;
-
-    paths->count = 0;
+    if (!args || !*args || !filepaths)
+        return VCS_ERROR_NULL_INPUT;
 
     char *input = strdup(args);
-    if (!input) {
+    if (!input)
+    {
         return VCS_ERROR_MEMORY_ALLOCATION_FAILED;
     }
 
@@ -98,8 +50,9 @@ vcs_error_t parse_add_args(const char *args, path_list_t *paths)
     char *token = strtok(input, " ");
     vcs_error_t err = VCS_OK;
 
-    while (token != NULL && err == VCS_OK) {
-        err = add_paths_recursively(token, paths);
+    while (token != NULL && err == VCS_OK)
+    {
+        err = add_paths_recursively(token, filepaths);
         token = strtok(NULL, " ");
     }
 
@@ -128,13 +81,15 @@ int main(void)
         else if (strcmp(command, "add") == 0)
         {
             char line[1024];
-            path_list_t paths = {0};
+            UT_array *filepaths;
+            utarray_new(filepaths, &ut_str_icd);
+
             if (fgets(line, sizeof(line), stdin))
             {
-                vcs_error_t err = parse_add_args(line, &paths);
+                vcs_error_t err = parse_add_args(line, filepaths);
                 if (err == VCS_OK)
                 {
-                    err = vcs_add(paths.paths, paths.count);
+                    err = vcs_add(filepaths);
                     if (err != VCS_OK)
                     {
                         printf("Error: %s\n", vcs_error_string(err));
@@ -144,7 +99,7 @@ int main(void)
                 {
                     printf("Error: %s\n", vcs_error_string(err));
                 }
-                free_path_list(&paths);
+                utarray_free(filepaths);
             }
         }
         else if (strcmp(command, "commit") == 0)
@@ -175,432 +130,93 @@ int main(void)
     return 0;
 }
 
-vcs_error_t vcs_add(char **paths, size_t count)
+vcs_error_t vcs_add(UT_array *filepaths)
 {
-    if (!paths || count == 0)
+    if (!is_initialized())
+    {
+        return VCS_ERROR_NO_HEAD;
+    }
+
+    if (!filepaths)
     {
         return VCS_ERROR_NULL_INPUT;
     }
 
-    staged_file_t *staged_files = NULL;
-
-    vcs_error_t err = load_staged_files(&staged_files);
-
+    staging_area_t staging;
+    vcs_error_t err = staging_init(&staging, STAGED_PATH);
     if (err != VCS_OK)
     {
         return err;
     }
 
-    for (size_t i = 0; i < count; i++)
+    char **p_filepath = NULL;
+    while ((p_filepath = (char **)utarray_next(filepaths, p_filepath)))
     {
-       blob_t blob;
-        err = create_blob(paths[i], &blob);
+        char *filepath = *p_filepath;
+        // Validate file exists and is readable
+        if (!file_exists(filepath))
+        {
+            printf("Error: File '%s' does not exist\n", filepath);
+            continue;
+        }
+
+        // Create blob object
+        vcs_object_t blob;
+        err = object_init(&blob, OBJECT_TYPE_BLOB);
         if (err != VCS_OK)
         {
-            printf("Error: Could not create blob for '%s'\n", paths[i]);
-            continue;
-        }
-
-        err = upsert_staged_file(&staged_files, blob.hash.hex, paths[i]);
-        if (err != VCS_OK)
-        {
-            printf("Error: Could not add '%s' to staging area\n", paths[i]);
-            free(blob.data);
-            continue;
-        }
-
-        err = save_blob(&blob);
-        if (err != VCS_OK)
-        {
-            printf("Error: Could not save blob for '%s'\n", paths[i]);
-            free(blob.data);
-            continue;
-        }
-
-        free(blob.data); 
-    }
-
-    err = write_staged_file(&staged_files);
-    if (err != VCS_OK)
-    {
-        printf("Error: Could not write staging area\n");
-    }
-
-    if (staged_files)
-    {
-        free_staged_files(&staged_files);
-        staged_files = NULL;
-    }
-
-    return err;
-}
-
-vcs_error_t add_paths_recursively(const char *path, path_list_t *result)
-{
-    if (!path || !result)
-        return VCS_ERROR_NULL_INPUT;
-    if (result->count >= MAX_PATHS)
-        return VCS_TOO_MANY_ARGUMENTS;
-
-    file_type_t type = get_file_type(path);
-    if (type == FILE_TYPE_INVALID)
-    {
-        printf("Error: Invalid path '%s'\n", path);
-        return VCS_ERROR_FILE_DOES_NOT_EXIST;
-    }
-
-    if (type == FILE_TYPE_REGULAR)
-    {
-        result->paths[result->count] = strdup(path);
-        if (!result->paths[result->count])
-            return VCS_ERROR_MEMORY_ALLOCATION_FAILED;
-        result->count++;
-        return VCS_OK;
-    }
-
-    // Handle directory
-    DIR *dir = opendir(path);
-    if (!dir)
-        return VCS_ERROR_IO;
-
-    struct dirent *entry;
-    vcs_error_t err = VCS_OK;
-
-    while ((entry = readdir(dir)) != NULL && result->count < MAX_PATHS)
-    {
-        if (strcmp(entry->d_name, ".") == 0 ||
-            strcmp(entry->d_name, "..") == 0 ||
-            strcmp(entry->d_name, ".vcs") == 0)
-        {
-            continue;
-        }
-
-        char full_path[MAX_PATH_LENGTH];
-        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
-
-        err = add_paths_recursively(full_path, result);
-        if (err != VCS_OK && err != VCS_TOO_MANY_ARGUMENTS)
-        {
-            closedir(dir);
+            staging_clear(&staging);
             return err;
         }
-    }
 
-    closedir(dir);
-    return err;
-}
+        blob_object_t *blob_data = (blob_object_t *)blob.data;
+        strncpy(blob_data->src_path, filepath, MAX_PATH_LENGTH - 1);
 
-void free_path_list(path_list_t *list)
-{
-    if (!list)
-    {
-        return;
-    }
-    for (size_t i = 0; i < list->count; i++)
-    {
-        free(list->paths[i]);
-    }
-    free(list->paths);
-    list->count = 0;
-}
-
-vcs_error_t write_staged_file(staged_file_t **files_mp)
-{
-    if (!files_mp)
-    {
-        return VCS_ERROR_NULL_INPUT;
-    }
-
-    FILE *index = fopen(STAGED_PATH, "w");
-    if (!index)
-    {
-        return VCS_ERROR_IO;
-    }
-
-    staged_file_t *file, *tmp;
-    HASH_ITER(hh, *files_mp, file, tmp)
-    {
-        fprintf(index, "%s %s\n", file->hash, file->filepath);
-    }
-
-    fclose(index);
-    return VCS_OK;
-}
-
-void free_staged_files(staged_file_t **files_mp)
-{
-    if (!files_mp || !*files_mp)
-        return;
-
-    staged_file_t *current, *tmp;
-    HASH_ITER(hh, *files_mp, current, tmp)
-    {
-        HASH_DEL(*files_mp, current);
-        free(current);
-    }
-    *files_mp = NULL;
-}
-
-vcs_error_t save_blob(const blob_t *blob) {
-    if (!blob || !blob->data) {
-        return VCS_ERROR_NULL_INPUT;
-    }
-
-    // Create directory if it doesn't exist
-    char dir_path[MAX_PATH_LENGTH];
-    snprintf(dir_path, sizeof(dir_path), ".vcs/objects/%s", blob->path.dir);
-    
-    if (mkdir(dir_path, 0777) < 0 && errno != EEXIST) {
-        return VCS_ERROR_IO;
-    }
-
-    FILE *file = fopen(blob->path.path, "wb");
-    if (!file) {
-        return VCS_ERROR_IO;
-    }
-
-    // Format: "blob <size>\0<data>"
-    size_t header_size = snprintf(NULL, 0, "blob %zu/", blob->size);
-    char *header = malloc(header_size + 1);
-    if (!header) {
-        fclose(file);
-        return VCS_ERROR_MEMORY_ALLOCATION_FAILED;
-    }
-
-    snprintf(header, header_size + 1, "blob %zu", blob->size);
-    
-    // Write header with null byte
-    if (fwrite(header, 1, header_size, file) != header_size) {
-        free(header);
-        fclose(file);
-        return VCS_ERROR_IO;
-    }
-    free(header);
-
-    // Write data
-    if (fwrite(blob->data, 1, blob->size, file) != blob->size) {
-        fclose(file);
-        return VCS_ERROR_IO;
-    }
-
-    fclose(file);
-    return VCS_OK;
-}
-
-vcs_error_t create_blob(const char *filepath, blob_t *blob)
-{
-    vcs_error_t err = read_file_data(filepath, blob);
-    if (err != VCS_OK)
-    {
-        return err;
-    }
-
-    err = hash_content(blob->data, blob->size, &blob->hash);
-    if (err != VCS_OK)
-    {
-        free(blob->data);
-        return err;
-    }
-
-    err = create_blob_path(filepath, blob);
-    if (err != VCS_OK)
-    {
-        free(blob->data);
-        return err;
-    }
-
-    return VCS_OK;
-}
-
-vcs_error_t create_blob_path(const char *filepath, blob_t *blob)
-{
-    if (!filepath || !blob || blob->hash.hex[0] == '\0')
-    {
-        return VCS_ERROR_NULL_INPUT;
-    }
-
-    blob_path_t *blob_path = &blob->path;
-
-    blob_path->dir[0] = blob->hash.hex[0];
-    blob_path->dir[1] = blob->hash.hex[1];
-    blob_path->dir[2] = '\0';
-
-    strncpy(blob_path->filename, blob->hash.hex + 2, 38); 
-    blob_path->filename[38] = '\0';
-
-    if (snprintf(blob_path->path, MAX_PATH_LENGTH, BLOB_PATH_FMT,
-                 blob_path->dir, blob_path->filename) >= MAX_PATH_LENGTH)
-    {
-        return VCS_ERROR_BLOB_PATH_TOO_LONG;
-    }
-
-    return VCS_OK;
-}
-
-vcs_error_t read_file_data(const char *path, blob_t *blob) {
-    if (!path || !blob) {
-        return VCS_ERROR_NULL_INPUT;
-    }
-
-    if (!file_exists(path)) {
-        return VCS_ERROR_FILE_DOES_NOT_EXIST;
-    }
-
-    FILE *file = fopen(path, "rb");
-    if (!file) {
-        return VCS_ERROR_IO;
-    }
-
-    fseek(file, 0, SEEK_END);
-    long file_size = ftell(file);
-    rewind(file);
-
-    if (file_size > MAX_FILE_SIZE) {
-        fclose(file);
-        return VCS_ERROR_FILE_TOO_LARGE;
-    }
-
-    uint8_t *buffer = malloc(file_size);
-    if (!buffer) {
-        fclose(file);
-        return VCS_ERROR_MEMORY_ALLOCATION_FAILED;
-    }
-
-    size_t bytes_read = fread(buffer, 1, file_size, file);
-    if (bytes_read != file_size) {
-        free(buffer);
-        fclose(file);
-        return VCS_ERROR_IO;
-    }
-
-    blob->data = buffer;
-    blob->size = file_size;
-    
-    fclose(file);
-    return VCS_OK;
-}
-
-vcs_error_t upsert_staged_file(staged_file_t **files, const char *hash, const char *filepath)
-{
-    if (!files || !hash || !filepath)
-    {
-        return VCS_ERROR_NULL_INPUT;
-    }
-
-    staged_file_t *staged = malloc(sizeof(staged_file_t));
-    if (!staged)
-    {
-        return VCS_ERROR_MEMORY_ALLOCATION_FAILED;
-    }
-
-    strncpy(staged->hash, hash, HASH_STR_SIZE - 1);
-    staged->hash[HASH_STR_SIZE - 1] = '\0';
-    strncpy(staged->filepath, filepath, MAX_PATH_LENGTH - 1);
-    staged->filepath[MAX_PATH_LENGTH - 1] = '\0';
-
-    staged_file_t *existing;
-    HASH_REPLACE_STR(*files, filepath, staged, existing);
-    if (existing)
-    {
-        free(existing);
-    }
-
-    return VCS_OK;
-}
-
-
-
-vcs_error_t load_staged_files(staged_file_t **files)
-{
-    if (!files)
-    {
-        return VCS_ERROR_NULL_INPUT;
-    }
-
-    *files = NULL; // Initialize hash table
-
-    FILE *index = fopen(STAGED_PATH, "r");
-    if (!index)
-    {
-        return VCS_OK; // Empty staging area is valid
-    }
-
-    char line[MAX_PATH_LENGTH + HASH_STR_SIZE + 2]; // +2 for space and newline
-    while (fgets(line, sizeof(line), index))
-    {
-        // Remove newline
-        line[strcspn(line, "\n")] = 0;
-
-        // Parse hash and filepath
-        char hash[HASH_STR_SIZE];
-        char filepath[MAX_PATH_LENGTH];
-
-        if (sscanf(line, "%40s %s", hash, filepath) == 2)
+        unsigned char hash[HASH_SIZE];
+        err = sha256_hash_file(filepath, hash);
+        if (err != VCS_OK)
         {
-            staged_file_t *staged = malloc(sizeof(staged_file_t));
-            if (!staged)
-            {
-                fclose(index);
-                return VCS_ERROR_IO;
-            }
-
-            strncpy(staged->hash, hash, HASH_STR_SIZE - 1);
-            staged->hash[HASH_STR_SIZE - 1] = '\0';
-
-            strncpy(staged->filepath, filepath, MAX_PATH_LENGTH - 1);
-            staged->filepath[MAX_PATH_LENGTH - 1] = '\0';
-
-            HASH_ADD_STR(*files, filepath, staged);
+            object_free(&blob);
+            staging_clear(&staging);
+            return err;
         }
+
+        err = object_read(hash, &blob);
+        if (err != VCS_OK)
+        {
+            object_free(&blob);
+            staging_clear(&staging);
+            return err;
+        }
+
+        err = object_write(&blob);
+        if (err != VCS_OK)
+        {
+            object_free(&blob);
+            staging_clear(&staging);
+            return err;
+        }
+
+        err = staging_add_entry(&staging, filepath, hash);
+        if (err != VCS_OK)
+        {
+            object_free(&blob);
+            staging_clear(&staging);
+            return err;
+        }
+        printf("Added %s\n", filepath);
+
+        object_free(&blob);
     }
 
-    fclose(index);
-    return VCS_OK;
-}
-
-
-bool is_valid_path(const char *path)
-{
-    struct stat st;
-    if (stat(path, &st) != 0)
+    err = staging_save(&staging);
+    if (err != VCS_OK)
     {
-        return false;
-    }
-    return S_ISREG(st.st_mode) || S_ISDIR(st.st_mode);
-}
-
-vcs_error_t hash_content(const uint8_t *data, size_t size, hash_t *hash)
-{
-    if (!data || !hash)
-    {
-        return VCS_ERROR_NULL_INPUT;
+        staging_clear(&staging);
+        return err;
     }
 
-    memset(hash->raw, 0, HASH_SIZE);
-
-    uint32_t h = 2166136261u;
-    for (size_t i = 0; i < size; i++)
-    {
-        h ^= data[i];
-        h *= 16777619;
-        hash->raw[i % HASH_SIZE] ^= h;
-    }
-
-    return hash_to_hex(hash->raw, hash->hex, HASH_STR_SIZE);
-}
-
-vcs_error_t hash_to_hex(const unsigned char *hash, char *hex, size_t hex_size)
-{
-    if (!hash || !hex || hex_size < HASH_STR_SIZE)
-    {
-        return VCS_ERROR_NULL_INPUT;
-    }
-
-    for (int i = 0; i < HASH_SIZE; i++)
-    {
-        snprintf(hex + (i * 2), 3, "%02x", hash[i]);
-    }
-
+    staging_clear(&staging);
     return VCS_OK;
 }
 
@@ -758,6 +374,12 @@ bool is_valid_branch_name(const char *name)
 
 void vcs_status()
 {
+    if (!is_initialized())
+    {
+        printf("vcs not initialized\n");
+        return;
+    }
+
     char branch_name[256];
     vcs_error_t err = get_current_branch(branch_name, sizeof(branch_name));
 
@@ -805,4 +427,15 @@ vcs_error_t get_current_branch(char *buffer, size_t buffer_size)
     }
 
     return VCS_OK;
+}
+
+bool is_initialized()
+{
+    DIR *dir = opendir(".vcs");
+    if (dir)
+    {
+        closedir(dir);
+        return true;
+    }
+    return false;
 }

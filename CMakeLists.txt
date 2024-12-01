@@ -3,6 +3,9 @@ project(mygit C)
 
 set(CMAKE_C_STANDARD 99)
 
+find_package(OpenSSL REQUIRED)
+find_package(ZLIB REQUIRED)
+
 # Find uthash include directory
 find_path(UTHASH_INCLUDE_DIR
     NAMES uthash.h
@@ -18,10 +21,16 @@ endif()
 include_directories(
     ${UTHASH_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/include
-    )
-
-# Find all source files in src directory
+    ${OPENSSL_INCLUDE_DIR}
+    ${ZLIB_INCLUDE_DIRS}
+)
+ 
 file(GLOB_RECURSE SOURCES "src/*.c")
-
+ 
 # Add executable
 add_executable(mygit ${SOURCES})
+
+target_link_libraries(mygit 
+    ${OPENSSL_LIBRARIES}
+    ZLIB::ZLIB
+)
