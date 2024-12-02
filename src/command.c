@@ -108,6 +108,8 @@ int command_add_validate(command_t *self, int argc, char **argv)
 
 int command_add_run(command_t *self, int argc, char **argv)
 {
+
+
     repository_t *repo = repository_open();
     if (!repo)
     {
@@ -134,14 +136,6 @@ command_t command_add_obj = {
     .run = command_add_run,
     .cleanup = NULL};
 
-command_t command_rm = {
-    .name = "rm",
-    .description = "Remove files from the working tree and from the index",
-    .usage = "vcs rm <file>",
-    .ctx = NULL,
-    .validate = NULL,
-    .run = NULL,
-    .cleanup = NULL};
 
 command_t command_commit = {
     .name = "commit",
