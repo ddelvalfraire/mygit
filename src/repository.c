@@ -221,7 +221,7 @@ static void add_directory(UT_array *arr, const char *dirpath)
     closedir(dir);
 }
 
-int parse_file_args(int argc, char **argv, UT_array *arr) {
+static int parse_file_args(int argc, char **argv, UT_array *arr) {
     for (int i = 2; i < argc; i++) {
         if (is_directory(argv[i])) {
             add_directory(arr, argv[i]);
