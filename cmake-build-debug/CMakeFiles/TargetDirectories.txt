@@ -1,3 +1,0 @@
-/Users/daviddelval/CLionProjects/mygit/cmake-build-debug/CMakeFiles/mygit.dir
-/Users/daviddelval/CLionProjects/mygit/cmake-build-debug/CMakeFiles/edit_cache.dir
-/Users/daviddelval/CLionProjects/mygit/cmake-build-debug/CMakeFiles/rebuild_cache.dir
