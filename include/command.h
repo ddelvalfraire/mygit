@@ -4,7 +4,7 @@
 typedef struct command command_t;
 
 command_t *command_init();
-command_t *add(void);
+command_t *command_add(void);
 command_t *rm(void);
 command_t *commit(void);
 command_t *status(void);

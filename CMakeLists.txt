@@ -27,7 +27,7 @@ include_directories(
   
 file(GLOB_RECURSE SOURCES "src/*.c")
  
-# Add executable
+# Add executable 
 add_executable(mygit ${SOURCES})
 
 target_link_libraries(mygit 

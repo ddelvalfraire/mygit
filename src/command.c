@@ -1,10 +1,10 @@
 #include "command.h"
-#include "commands.h"
 #include "cmd_errors.h"
 #include "repository.h"
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <sys/stat.h>
 
 struct command
 {
@@ -64,7 +64,7 @@ int command_init_validate(command_t *self, int argc, char **argv)
 
 int command_init_run(command_t *self, int argc, char **argv)
 {
-    repository_t *repo = repository_init(argv[0]);
+    repository_t *repo = repository_init();
     if (!repo)
     {
         fprintf(stderr, "Error: Failed to initialize repository\n");
@@ -84,13 +84,54 @@ command_t command_init_obj = {
     .run = command_init_run,
     .cleanup = NULL};
 
-command_t command_add = {
+int command_add_validate(command_t *self, int argc, char **argv)
+{
+    if (argc < 3)
+    {
+        fprintf(stderr, "Error: Invalid number of arguments\n");
+        fprintf(stderr, "Usage: %s\n", self->usage);
+        return CMD_ERROR_INVALID_ARGUMENTS;
+    }
+
+    for (int i = 2; i < argc; i++)
+    {
+        struct stat st;
+        if (stat(argv[i], &st) != 0)
+        {
+            fprintf(stderr, "Error: '%s' is not a valid file or directory\n", argv[i]);
+            return CMD_ERROR_INVALID_ARGUMENTS;
+        }
+    }
+
+    return 0;
+}
+
+int command_add_run(command_t *self, int argc, char **argv)
+{
+    repository_t *repo = repository_open();
+    if (!repo)
+    {
+        fprintf(stderr, "Error: Failed to open repository\n");
+        return CMD_ERROR_EXEC_FAILED;
+    }
+
+    int result = repository_add(repo, argc - 2, argv + 2);
+    if (result != 0)
+    {
+        fprintf(stderr, "Error: Failed to add files to repository\n");
+    }
+
+    repository_free(repo);
+    return result == 0 ? 0 : CMD_ERROR_EXEC_FAILED;
+}
+
+command_t command_add_obj = {
     .name = "add",
     .description = "Add file contents to the index",
     .usage = "vcs add <file>",
     .ctx = NULL,
-    .validate = NULL,
-    .run = NULL,
+    .validate = command_add_validate,
+    .run = command_add_run,
     .cleanup = NULL};
 
 command_t command_rm = {
@@ -132,4 +173,9 @@ command_t command_log = {
 command_t *command_init()
 {
     return &command_init_obj;
+}
+
+command_t *command_add()
+{
+    return &command_add_obj;
 }
