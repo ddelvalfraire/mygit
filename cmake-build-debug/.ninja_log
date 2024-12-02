@@ -1,0 +1,10 @@
+# ninja log v6
+2	54	1733111118313685878	CMakeFiles/mygit.dir/src/commands/commit.c.o	b8b0b807a6947e10
+2	54	1733111118313582086	CMakeFiles/mygit.dir/src/commands/add.c.o	5b86f2708b1e12bc
+2	55	1733111118313788045	CMakeFiles/mygit.dir/src/commands/init.c.o	b21f0b941128e514
+2	55	1733111118313892087	CMakeFiles/mygit.dir/src/commands/rm.c.o	7d4d3a1ff24c11c7
+2	55	1733111118314197338	CMakeFiles/mygit.dir/src/commands/status.c.o	c1c4aa68a0f9094f
+1	63	1733111118312882625	CMakeFiles/mygit.dir/src/cmd_errors.c.o	aaf261981e40fdae
+3	65	1733111118314584131	CMakeFiles/mygit.dir/src/main.c.o	c724f719faa5a023
+2	69	1733111118313458710	CMakeFiles/mygit.dir/src/command.c.o	b8b62807f504253a
+70	100	1733111118381284769	mygit	2e7d45a3840e6b9a

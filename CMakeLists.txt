@@ -23,8 +23,8 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${OPENSSL_INCLUDE_DIR}
     ${ZLIB_INCLUDE_DIRS}
-)
- 
+) 
+  
 file(GLOB_RECURSE SOURCES "src/*.c")
  
 # Add executable
