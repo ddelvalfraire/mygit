@@ -1,5 +1,8 @@
 #include "object.h"
 #include "tree.h"
+#include "util.h"
+#include "object_types.h"
+#include "parser.h"
 #include "config.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -11,68 +14,7 @@
 #include <libgen.h>
 #include <uthash.h>
 
-typedef struct
-{
-    char hash[HEX_SIZE];
-    object_type_t type;
-    size_t content_size;
-} object_header_t;
 
-struct object
-{
-    object_header_t header;
-    void *data;
-};
-
-typedef struct
-{
-    unsigned char data[FILE_MAX];
-    size_t size;
-} blob_data_t;
-
-typedef enum
-{
-    TREE_FILE,
-    TREE_SUBDIR
-} tree_entry_type_t;
-
-typedef struct tree_entry
-{
-    mode_t mode;
-    char name[PATH_MAX];
-    char hash[HEX_SIZE];
-    UT_hash_handle hh;
-} tree_entry_t;
-
-typedef struct tree_data
-{
-    tree_entry_t *entries;
-    char dirname[PATH_MAX];
-    size_t size;
-} tree_data_t;
-
-typedef struct
-{
-    char path[PATH_MAX];
-    object_t *tree;
-    UT_hash_handle hh;
-} tree_map_t;
-
-typedef struct
-{
-    char name[NAME_MAX];
-    char email[NAME_MAX];
-    time_t time;
-    off_t offset;
-} signature_t;
-
-typedef struct
-{
-    char tree_hash[HEX_SIZE];
-    signature_t author;
-    signature_t committer;
-    char message[COMMIT_MSG_MAX];
-} commit_data_t;
 
 static void *object_data_allocate(object_type_t type)
 {
@@ -125,14 +67,7 @@ void object_free(object_t *obj)
     obj = NULL;
 }
 
-static int hash_to_hex(const unsigned char *hash, char *hex)
-{
-    for (int i = 0; i < SHA256_SIZE; i++)
-    {
-        sprintf(hex + i * 2, "%02x", hash[i]);
-    }
-    return 0;
-}
+
 
 static const char *object_type_to_string(object_type_t type)
 {
@@ -305,17 +240,8 @@ static int object_compute_hash(object_t *obj, char *hash)
     return 0;
 }
 
-static size_t get_filesize(const char *filepath)
-{
-    struct stat st;
-    if (stat(filepath, &st) == 0)
-    {
-        return st.st_size;
-    }
-    return 0;
-}
 
-static int update_blob(object_t *obj, object_data_t data)
+static int update_blob(object_t *obj, object_update_t data)
 {
     blob_data_t *blob = (blob_data_t *)obj->data;
 
@@ -415,7 +341,7 @@ static void process_tree(node_t *node, object_t *curr_tree)
     }
 }
 
-static int update_tree(object_t *obj, object_data_t data)
+static int update_tree(object_t *obj, object_update_t data)
 {
     tree_data_t *tree_data = (tree_data_t *)obj->data;
     tree_data->size = 0;
@@ -436,7 +362,7 @@ static int update_tree(object_t *obj, object_data_t data)
     return 0;
 }
 
-static int update_commit(object_t *obj, object_data_t data)
+static int update_commit(object_t *obj, object_update_t data)
 {
     commit_data_t *commit = (commit_data_t *)obj->data;
     strcpy(commit->tree_hash, data.commit.tree_hash);
@@ -462,7 +388,7 @@ static int update_commit(object_t *obj, object_data_t data)
 
     return 0;
 }
-int object_update(object_t *obj, object_data_t data)
+int object_update(object_t *obj, object_update_t data)
 {
     switch (obj->header.type)
     {
@@ -478,20 +404,6 @@ int object_update(object_t *obj, object_data_t data)
     }
 }
 
-static int create_directory(const char *path)
-{
-    struct stat st = {0};
-    if (stat(path, &st) == -1)
-    {
-        if (mkdir(path, 0755) == -1)
-        {
-            fprintf(stderr, "Error creating directory '%s': %s\n",
-                    path, strerror(errno));
-            return -1;
-        }
-    }
-    return 0;
-}
 
 static int write_tree_data(FILE *fp, tree_data_t *data)
 {
@@ -644,4 +556,86 @@ int object_write(object_t *obj, char *out_hash)
         strcpy(out_hash, hash);
     }
     return 0;
+}
+
+static int object_read_headerr(FILE *fp, char *header)
+{
+    char c;
+    int i = 0;
+    while (fread(&c, 1, 1, fp) == 1)
+    {
+        if (c == '\0')
+        {
+            header[i] = '\0';
+            return 0;
+        }
+        header[i++] = c;
+    }
+    return -1;
+}
+
+static int object_parse_header(char *header, object_t *obj)
+{
+    char type[16];
+    size_t size;
+    if (sscanf(header, "%s %zu", type, &size) != 2)
+    {
+        fprintf(stderr, "Error: Failed to parse header\n");
+        return -1;
+    }
+
+    if (strcmp(type, "blob") == 0)
+    {
+        obj->header.type = OBJ_BLOB;
+    }
+    else if (strcmp(type, "tree") == 0)
+    {
+        obj->header.type = OBJ_TREE;
+    }
+    else if (strcmp(type, "commit") == 0)
+    {
+        obj->header.type = OBJ_COMMIT;
+    }
+    else
+    {
+        fprintf(stderr, "Error: Unknown object type '%s'\n", type);
+        return -1;
+    }
+
+    obj->header.content_size = size;
+    return 0;
+}
+
+static int object_read_content(FILE *fp, char* content)
+{
+    size_t file_size = get_filesize(fp);
+
+    if (file_size > FILE_MAX)
+    {
+        fprintf(stderr, "Error: File is too large (%zu bytes, max is %d)\n",
+                file_size, FILE_MAX);
+        return -1;
+    }
+
+
+    if (fread(content, 1, file_size, fp) != file_size)
+    {
+        fprintf(stderr, "Error: Failed to read content\n");
+        return -1;
+    }
+    return 0;
+}
+
+
+int object_read(object_t *obj, const char *hash)
+{
+    parser_t *parser = parser_init();
+
+    parse_result_t err = parser_read_object(parser, hash, obj);
+    
+    if (err != PARSE_OK) print_parser_error(err);
+
+    parser_free(parser);
+
+    return err == PARSE_OK ? 0 : -1;
 }

@@ -26,6 +26,7 @@ typedef union
      struct
      {
           const char *tree_hash;
+          const char *parent_hash;
           const char *message;
           const char *author_name;
           const char *author_email;
@@ -34,14 +35,15 @@ typedef union
           const char *committer_email;
           time_t committer_time;
      } commit;
-} object_data_t;
+} object_update_t;
 
 typedef struct object object_t;
 
 object_t *object_init(object_type_t type);
 void object_free(object_t *obj);
 
-int object_update(object_t *obj, object_data_t data);
+int object_update(object_t *obj, object_update_t data);
 int object_write(object_t *obj, char *out_hash);
+int object_read(object_t *obj, const char *hash);
 
 #endif // OBJECT_H
