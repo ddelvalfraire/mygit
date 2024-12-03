@@ -7,5 +7,6 @@
 #define HEX_SIZE (SHA256_SIZE * 2 + 1)
 #define SHA256_SIZE 32
 #define FILE_MAX 4096
+#define COMMIT_MSG_MAX 512
 
 #endif // CONFIG_H

@@ -19,7 +19,6 @@
 #define VCS_PATH_MAX 4096
 #define VCS_NAME_MAX 256
 
-
 struct repository
 {
     char worktree[VCS_PATH_MAX];
@@ -113,6 +112,21 @@ static repository_t *repository_alloc(const char *path)
     return repo;
 }
 
+static int init_master_branch(const char *vcsdir)
+{
+    char master_path[VCS_PATH_MAX];
+    snprintf(master_path, sizeof(master_path), "%s/refs/heads/master", vcsdir);
+
+    FILE *fp = fopen(master_path, "w");
+    if (!fp)
+    {
+        fprintf(stderr, "Error creating master branch: %s\n", strerror(errno));
+        return -1;
+    }
+    fclose(fp);
+    return 0;
+}
+
 repository_t *repository_init()
 {
     repository_t *repo = repository_alloc(".");
@@ -137,6 +151,13 @@ repository_t *repository_init()
 
     // Initialize HEAD file
     if (init_head_file(repo->vcsdir) != 0)
+    {
+        repository_free(repo);
+        return NULL;
+    }
+
+    // Initialize master branch
+    if (init_master_branch(repo->vcsdir) != 0)
     {
         repository_free(repo);
         return NULL;
@@ -460,7 +481,30 @@ int repository_add(repository_t *repo, int size, char **files)
     return 0;
 }
 
-static int update_head(repository_t *repo, const char *commit_hash)
+static int update_branch_ref(repository_t *repo, const char *branch, const char *commit_hash)
+{
+    char branch_path[VCS_PATH_MAX];
+    snprintf(branch_path, sizeof(branch_path), "%s/refs/heads/%s", repo->vcsdir, branch);
+
+    FILE *fp = fopen(branch_path, "w");
+    if (!fp)
+    {
+        fprintf(stderr, "Error opening branch file: %s\n", strerror(errno));
+        return -1;
+    }
+
+    if (fprintf(fp, "%s\n", commit_hash) < 0)
+    {
+        fprintf(stderr, "Error writing to branch file: %s\n", strerror(errno));
+        fclose(fp);
+        return -1;
+    }
+
+    fclose(fp);
+    return 0;
+}
+
+static int update_head(repository_t *repo, const char *branch)
 {
     char head_path[VCS_PATH_MAX];
     snprintf(head_path, sizeof(head_path), "%s/%s", repo->vcsdir, HEAD_FILE);
@@ -472,7 +516,8 @@ static int update_head(repository_t *repo, const char *commit_hash)
         return -1;
     }
 
-    if (fprintf(fp, "%s\n", commit_hash) < 0)
+    // Store symbolic ref
+    if (fprintf(fp, "ref: refs/heads/%s\n", branch) < 0)
     {
         fprintf(stderr, "Error writing to HEAD file: %s\n", strerror(errno));
         fclose(fp);
@@ -482,7 +527,6 @@ static int update_head(repository_t *repo, const char *commit_hash)
     fclose(fp);
     return 0;
 }
-
 static int reset_index(repository_t *repo)
 {
     if (unlink(repo->index_path) != 0)
@@ -493,7 +537,7 @@ static int reset_index(repository_t *repo)
     return 0;
 }
 
-static int write_tree(repository_t *repo, index_t *index)
+static int write_tree(repository_t *repo, index_t *index, char *out_tree_hash)
 {
     object_t *tree = object_init(OBJ_TREE);
     if (!tree)
@@ -505,17 +549,136 @@ static int write_tree(repository_t *repo, index_t *index)
     object_data_t data = {
         .tree = {.index = index}};
 
-   if (object_update(tree, data) != 0)
+    if (object_update(tree, data) != 0)
     {
         fprintf(stderr, "Error: Failed to update object\n");
         object_free(tree);
         return -1;
     }
 
-    if (object_write(tree, NULL) != 0)
+    if (object_write(tree, out_tree_hash) != 0)
     {
         fprintf(stderr, "Error: Failed to write object\n");
         object_free(tree);
+        return -1;
+    }
+
+    return 0;
+}
+
+static const char *DEFAULT_AUTHOR_NAME = "Unknown Author";
+static const char *DEFAULT_AUTHOR_EMAIL = "unknown@localhost";
+
+static int read_config_value(const char *key, char *out_value, size_t max_len)
+{
+    char config_path[PATH_MAX];
+    snprintf(config_path, sizeof(config_path), ".vcs/config");
+
+    FILE *fp = fopen(config_path, "r");
+    if (!fp)
+    {
+        return -1;
+    }
+
+    char line[256];
+    char k[128], v[128];
+    while (fgets(line, sizeof(line), fp))
+    {
+        if (sscanf(line, "%[^=]=%s", k, v) == 2)
+        {
+            if (strcmp(k, key) == 0)
+            {
+                strncpy(out_value, v, max_len);
+                fclose(fp);
+                return 0;
+            }
+        }
+    }
+    fclose(fp);
+    return -1;
+}
+
+static int get_user_info(const char *name_var, const char *email_var,
+                         char *name_out, char *email_out)
+{
+    // Try environment variables first
+    const char *name = getenv(name_var);
+    const char *email = getenv(email_var);
+
+    if (name && email)
+    {
+        strncpy(name_out, name, 100);
+        strncpy(email_out, email, 100);
+        return 0;
+    }
+
+    // Try config file next
+    char config_name[100], config_email[100];
+    if (!name && read_config_value(name_var, config_name, sizeof(config_name)) == 0)
+    {
+        name = config_name;
+    }
+    if (!email && read_config_value(email_var, config_email, sizeof(config_email)) == 0)
+    {
+        email = config_email;
+    }
+
+    // Use defaults as last resort
+    strncpy(name_out, name ? name : DEFAULT_AUTHOR_NAME, 100);
+    strncpy(email_out, email ? email : DEFAULT_AUTHOR_EMAIL, 100);
+
+    return 0;
+}
+static int write_commit(repository_t *repo, const char *tree_hash, const char *message, char *out_commit_hash)
+{
+    char author_name[100], author_email[100];
+    char committer_name[100], committer_email[100];
+    time_t now = time(NULL);
+
+    if (get_user_info("VCS_AUTHOR_NAME", "VCS_AUTHOR_EMAIL",
+                      author_name, author_email) != 0)
+    {
+        fprintf(stderr, "Error: Author info not configured\n");
+        return -1;
+    }
+
+    if (get_user_info("VCS_COMMITTER_NAME", "VCS_COMMITTER_EMAIL",
+                      committer_name, committer_email) != 0)
+    {
+        // Fall back to author
+        strcpy(committer_name, author_name);
+        strcpy(committer_email, author_email);
+    }
+
+    object_data_t data = {
+        .commit = {
+            .tree_hash = tree_hash,
+            .message = message,
+            .author_name = author_name,
+            .author_email = author_email,
+            .author_time = now,
+            .committer_name = committer_name,
+            .committer_email = committer_email,
+            .committer_time = now}};
+
+    object_t *commit = object_init(OBJ_COMMIT);
+    if (!commit)
+    {
+        fprintf(stderr, "Error: Failed to initialize commit object\n");
+        return -1;
+    }
+
+    if (object_update(commit, data) != 0)
+    {
+        fprintf(stderr, "Error: Failed to update object\n");
+        object_free(commit);
+        return -1;
+    }
+
+    if (object_write(commit, out_commit_hash) != 0)
+    {
+        fprintf(stderr, "Error: Failed to write object\n");
+        object_free(commit);
         return -1;
     }
 
@@ -532,12 +695,35 @@ int repository_commit(repository_t *repo, const char *message)
         return -1;
     }
 
+    char tree_hash[HEX_SIZE];
+    if (write_tree(repo, index, tree_hash) != 0)
+    {
+        fprintf(stderr, "Error: Failed to write tree object\n");
+        return -1;
+    }
 
-       if(write_tree(repo, index) != 0) {
-           fprintf(stderr, "Error: Failed to write tree object\n");
-           return -1;
-        }
+    char commit_hash[HEX_SIZE];
+    if (write_commit(repo, tree_hash, message, commit_hash) != 0)
+    {
+        fprintf(stderr, "Error: Failed to write commit object\n");
+        return -1;
+    }
+
+    if (update_branch_ref(repo, repo->branch_name, commit_hash) != 0)
+    {
+        fprintf(stderr, "Error: Failed to update branch ref\n");
+        return -1;
+    }
 
     printf("Committed %d files\n", index->header.entry_count);
+
+    if (reset_index(repo) != 0)
+    {
+        fprintf(stderr, "Error: Failed to reset index\n");
+        return -1;
+    }
+
+    free(index);
+    
     return 0;
 }

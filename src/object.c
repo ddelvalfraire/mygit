@@ -11,7 +11,6 @@
 #include <libgen.h>
 #include <uthash.h>
 
-
 typedef struct
 {
     char hash[HEX_SIZE];
@@ -59,6 +58,22 @@ typedef struct
     UT_hash_handle hh;
 } tree_map_t;
 
+typedef struct
+{
+    char name[NAME_MAX];
+    char email[NAME_MAX];
+    time_t time;
+    off_t offset;
+} signature_t;
+
+typedef struct
+{
+    char tree_hash[HEX_SIZE];
+    signature_t author;
+    signature_t committer;
+    char message[COMMIT_MSG_MAX];
+} commit_data_t;
+
 static void *object_data_allocate(object_type_t type)
 {
     switch (type)
@@ -67,6 +82,8 @@ static void *object_data_allocate(object_type_t type)
         return malloc(sizeof(blob_data_t));
     case OBJ_TREE:
         return malloc(sizeof(tree_entry_t));
+    case OBJ_COMMIT:
+        return malloc(sizeof(commit_data_t));
     default:
         return NULL;
     }
@@ -180,6 +197,72 @@ static int object_update_hash_with_tree(EVP_MD_CTX *ctx, tree_entry_t *entries)
     return 0;
 }
 
+static int object_update_hash_with_commit(EVP_MD_CTX *ctx, commit_data_t *data)
+{
+    if (!EVP_DigestUpdate(ctx, data->tree_hash, HEX_SIZE - 1))
+    {
+        return -1;
+    }
+
+    if (!EVP_DigestUpdate(ctx, &data->author, sizeof(signature_t)))
+    {
+        return -1;
+    }
+
+    if (!EVP_DigestUpdate(ctx, &data->committer, sizeof(signature_t)))
+    {
+        return -1;
+    }
+
+    if (!EVP_DigestUpdate(ctx, data->message, strlen(data->message)))
+    {
+        return -1;
+    }
+
+    return 0;
+}
+
+static int object_update_hash_with_data(EVP_MD_CTX *ctx, object_t *obj)
+{
+    switch (obj->header.type)
+    {
+    case OBJ_BLOB:
+    {
+        blob_data_t *blob = (blob_data_t *)obj->data;
+        if (!EVP_DigestUpdate(ctx, blob->data, blob->size))
+        {
+
+            return -1;
+        }
+        break;
+    }
+    case OBJ_TREE:
+    {
+        tree_data_t *tree = (tree_data_t *)obj->data;
+        if (object_update_hash_with_tree(ctx, tree->entries) != 0)
+        {
+
+            return -1;
+        }
+        break;
+    }
+    case OBJ_COMMIT:
+    {
+        commit_data_t *commit = (commit_data_t *)obj->data;
+        if (object_update_hash_with_commit(ctx, commit) != 0)
+        {
+
+            return -1;
+        }
+        break;
+    }
+    default:
+
+        return -1;
+    }
+    return 0;
+}
+
 static int object_compute_hash(object_t *obj, char *hash)
 {
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
@@ -205,29 +288,8 @@ static int object_compute_hash(object_t *obj, char *hash)
     }
 
     // Hash content based on type
-    switch (obj->header.type)
+    if (object_update_hash_with_data(ctx, obj) != 0)
     {
-    case OBJ_BLOB:
-    {
-        blob_data_t *blob = (blob_data_t *)obj->data;
-        if (!EVP_DigestUpdate(ctx, blob->data, blob->size))
-        {
-            EVP_MD_CTX_free(ctx);
-            return -1;
-        }
-        break;
-    }
-    case OBJ_TREE:
-    {
-        tree_data_t *tree = (tree_data_t *)obj->data;
-        if (object_update_hash_with_tree(ctx, tree->entries) != 0)
-        {
-            EVP_MD_CTX_free(ctx);
-            return -1;
-        }
-        break;
-    }
-    default:
         EVP_MD_CTX_free(ctx);
         return -1;
     }
@@ -294,20 +356,20 @@ static int update_blob(object_t *obj, object_data_t data)
     return 0;
 }
 
-static tree_entry_t * index_entry_to_tree_entry(index_entry_t *index_entry)
+static tree_entry_t *index_entry_to_tree_entry(index_entry_t *index_entry)
 {
     tree_entry_t *tree_entry = malloc(sizeof(tree_entry_t));
 
     tree_entry->mode = index_entry->mode;
     strcpy(tree_entry->name, index_entry->path);
     strcpy(tree_entry->hash, index_entry->hash);
-    
+
     return tree_entry;
 }
 
 static tree_entry_t *object_tree_to_tree_entry(object_t *obj)
 {
-   tree_entry_t *tree_entry = malloc(sizeof(tree_entry_t));
+    tree_entry_t *tree_entry = malloc(sizeof(tree_entry_t));
     tree_data_t *tree_data = (tree_data_t *)obj->data;
     tree_entry->mode = S_IFDIR;
     strcpy(tree_entry->name, tree_data->dirname);
@@ -315,17 +377,18 @@ static tree_entry_t *object_tree_to_tree_entry(object_t *obj)
     return tree_entry;
 }
 
-static void process_tree(node_t *node, object_t *curr_tree) 
+static void process_tree(node_t *node, object_t *curr_tree)
 {
-    if (!node) return;
+    if (!node)
+        return;
 
     tree_data_t *curr_data = (tree_data_t *)curr_tree->data;
     tree_entry_t *tree_entry;
 
     // Process all children first
-    for (int i = 0; i < node->child_count; i++) 
+    for (int i = 0; i < node->child_count; i++)
     {
-        if (node->children[i]->is_file) 
+        if (node->children[i]->is_file)
         {
             // Files get added directly to current tree
             index_entry_t *index_entry = (index_entry_t *)node->children[i]->data;
@@ -334,19 +397,19 @@ static void process_tree(node_t *node, object_t *curr_tree)
             curr_tree->header.content_size += index_entry->size;
             curr_data->size++;
         }
-        else 
+        else
         {
             // Create new tree object for subdirectory
             object_t *child_tree = object_init(OBJ_TREE);
             process_tree(node->children[i], child_tree);
-            
+
             // Write child tree and add it to current tree
             object_write(child_tree, NULL);
             tree_entry_t *child_entry = object_tree_to_tree_entry(child_tree);
             HASH_ADD_STR(curr_data->entries, name, child_entry);
             curr_tree->header.content_size += sizeof(mode_t) + strlen(child_entry->name) + HEX_SIZE - 1;
             curr_data->size++;
-            
+
             object_free(child_tree);
         }
     }
@@ -361,7 +424,7 @@ static int update_tree(object_t *obj, object_data_t data)
 
     index_t *index = data.tree.index;
     node_t *root = createNode(".", 0);
-    
+
     index_hash_entry_t *entry;
     for (entry = index->entries; entry != NULL; entry = entry->hh.next)
     {
@@ -371,8 +434,65 @@ static int update_tree(object_t *obj, object_data_t data)
     process_tree(root, obj);
 
     return 0;
-
 }
+
+static int update_commit(object_t *obj, object_data_t data)
+{
+    commit_data_t *commit = (commit_data_t *)obj->data;
+    strcpy(commit->tree_hash, data.commit.tree_hash);
+    strcpy(commit->message, data.commit.message);
+    strcpy(commit->author.name, data.commit.author_name);
+    strcpy(commit->author.email, data.commit.author_email);
+    commit->author.time = data.commit.author_time;
+    strcpy(commit->committer.name, data.commit.committer_name);
+    strcpy(commit->committer.email, data.commit.committer_email);
+    commit->committer.time = data.commit.committer_time;
+
+    // Calculate total size
+    obj->header.content_size = 
+        5 + HEX_SIZE + 1 +                              // "tree <hash>\n"
+        7 + strlen(commit->author.name) + 2 +           // "author <name> "
+        strlen(commit->author.email) + 2 +              // "<email> "
+        20 + 1 +                                        // timestamp + \n
+        10 + strlen(commit->committer.name) + 2 +       // "committer <name> "
+        strlen(commit->committer.email) + 2 +           // "<email> "
+        20 + 1 +                                        // timestamp + \n
+        1 +                                             // blank line
+        strlen(commit->message);                        // message
+
+    return 0;
+}
+int object_update(object_t *obj, object_data_t data)
+{
+    switch (obj->header.type)
+    {
+    case OBJ_BLOB:
+        return update_blob(obj, data);
+    case OBJ_TREE:
+        return update_tree(obj, data);
+    case OBJ_COMMIT:
+        return update_commit(obj, data);
+    default:
+        fprintf(stderr, "Error: Unsupported type\n");
+        return -1;
+    }
+}
+
+static int create_directory(const char *path)
+{
+    struct stat st = {0};
+    if (stat(path, &st) == -1)
+    {
+        if (mkdir(path, 0755) == -1)
+        {
+            fprintf(stderr, "Error creating directory '%s': %s\n",
+                    path, strerror(errno));
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static int write_tree_data(FILE *fp, tree_data_t *data)
 {
     tree_entry_t *entry;
@@ -395,32 +515,28 @@ static int write_tree_data(FILE *fp, tree_data_t *data)
     return 0;
 }
 
-int object_update(object_t *obj, object_data_t data)
+static int write_commit_data(FILE *fp, commit_data_t *data)
 {
-    switch (obj->header.type)
+    if (fprintf(fp, "tree %s\n", data->tree_hash) < 0)
     {
-    case OBJ_BLOB:
-        return update_blob(obj, data);
-    case OBJ_TREE:
-        return update_tree(obj, data);
-    default:
-        fprintf(stderr, "Error: Unsupported type\n");
         return -1;
     }
-}
 
-static int create_directory(const char *path)
-{
-    struct stat st = {0};
-    if (stat(path, &st) == -1)
+    if (fprintf(fp, "author %s <%s> %ld\n", data->author.name, data->author.email, data->author.time) < 0)
     {
-        if (mkdir(path, 0755) == -1)
-        {
-            fprintf(stderr, "Error creating directory '%s': %s\n",
-                    path, strerror(errno));
-            return -1;
-        }
+        return -1;
     }
+
+    if (fprintf(fp, "committer %s <%s> %ld\n", data->committer.name, data->committer.email, data->committer.time) < 0)
+    {
+        return -1;
+    }
+
+    if (fprintf(fp, "\n%s\n", data->message) < 0)
+    {
+        return -1;
+    }
+
     return 0;
 }
 
@@ -431,6 +547,51 @@ static int object_write_header(FILE *fp, object_t *obj)
                           obj->header.content_size,
                           '\0');
     return written < 0 ? -1 : 0;
+}
+
+static int object_data_write(FILE *fp, object_t *obj)
+{
+    switch (obj->header.type)
+    {
+    case OBJ_BLOB:
+    {
+        blob_data_t *blob = (blob_data_t *)obj->data;
+        if (fwrite(blob->data, 1, blob->size, fp) != blob->size)
+        {
+            fprintf(stderr, "Error: Failed to write data\n");
+            fclose(fp);
+            return -1;
+        }
+        break;
+    }
+    case OBJ_TREE:
+    {
+        tree_data_t *tree = (tree_data_t *)obj->data;
+        if (write_tree_data(fp, tree) < 0)
+        {
+            fprintf(stderr, "Error: Failed to write tree data\n");
+            fclose(fp);
+            return -1;
+        }
+        break;
+    }
+    case OBJ_COMMIT:
+    {
+        commit_data_t *commit = (commit_data_t *)obj->data;
+        if (write_commit_data(fp, commit) < 0)
+        {
+            fprintf(stderr, "Error: Failed to write commit data\n");
+            fclose(fp);
+            return -1;
+        }
+        break;
+    }
+    default:
+        fprintf(stderr, "Error: Unsupported type\n");
+        fclose(fp);
+        return -1;
+    }
+    return 0;
 }
 
 int object_write(object_t *obj, char *out_hash)
@@ -469,32 +630,9 @@ int object_write(object_t *obj, char *out_hash)
         return -1;
     }
 
-    switch (obj->header.type)
+    if (object_data_write(fp, obj) < 0)
     {
-    case OBJ_BLOB:
-    {
-        blob_data_t *blob = (blob_data_t *)obj->data;
-        if (fwrite(blob->data, 1, blob->size, fp) != blob->size)
-        {
-            fprintf(stderr, "Error: Failed to write data\n");
-            fclose(fp);
-            return -1;
-        }
-        break;
-    }
-    case OBJ_TREE:
-    {
-        tree_data_t *tree = (tree_data_t *)obj->data;
-        if (write_tree_data(fp, tree) < 0)
-        {
-            fprintf(stderr, "Error: Failed to write tree data\n");
-            fclose(fp);
-            return -1;
-        }
-        break;
-    }
-    default:
-        fprintf(stderr, "Error: Unsupported type\n");
+        fprintf(stderr, "Error: Failed to write data\n");
         fclose(fp);
         return -1;
     }
