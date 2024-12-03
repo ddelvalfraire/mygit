@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/stat.h>
+#include <string.h>
+#include <getopt.h>
 
 struct command
 {
@@ -75,7 +77,7 @@ int command_init_run(command_t *self, int argc, char **argv)
     return 0;
 }
 
-command_t command_init_obj = {
+command_t command_init_impl = {
     .name = "init",
     .description = "Create an empty repository or reinitialize an existing one",
     .usage = "vcs init",
@@ -109,7 +111,6 @@ int command_add_validate(command_t *self, int argc, char **argv)
 int command_add_run(command_t *self, int argc, char **argv)
 {
 
-
     repository_t *repo = repository_open();
     if (!repo)
     {
@@ -127,7 +128,7 @@ int command_add_run(command_t *self, int argc, char **argv)
     return result == 0 ? 0 : CMD_ERROR_EXEC_FAILED;
 }
 
-command_t command_add_obj = {
+command_t command_add_impl = {
     .name = "add",
     .description = "Add file contents to the index",
     .usage = "vcs add <file>",
@@ -136,14 +137,68 @@ command_t command_add_obj = {
     .run = command_add_run,
     .cleanup = NULL};
 
+typedef struct
+{
+    const char *message;
+} commit_ctx_t;
 
-command_t command_commit = {
+int command_commit_validate(command_t *self, int argc, char **argv)
+{
+    commit_ctx_t *ctx = (commit_ctx_t *)self->ctx;
+
+    for (int i = 2; i < argc; i++)
+    {
+        if (strcmp(argv[i], "-m") == 0 && i + 1 < argc)
+        {
+            ctx->message = argv[i + 1];
+            break;
+        } else {
+            fprintf(stderr, "Error: Invalid option '%s'\n", argv[i]);
+            fprintf(stderr, "Usage: %s\n", self->usage);
+            return -1;
+        }
+    }
+
+    if (!ctx->message)
+    {
+        fprintf(stderr, "Error: Missing commit message\n");
+        fprintf(stderr, "Usage: %s\n", self->usage);
+        return -1;
+    }
+
+    return 0;
+}
+
+int command_commit_run(command_t *self, int argc, char **argv)
+{
+    repository_t *repo = repository_open();
+    if (!repo)
+    {
+        fprintf(stderr, "Error: Failed to open repository\n");
+        return CMD_ERROR_EXEC_FAILED;
+    }
+
+    commit_ctx_t *ctx = (commit_ctx_t *)self->ctx;
+
+    int result = repository_commit(repo, ctx->message);
+    if (result != 0)
+    {
+        fprintf(stderr, "Error: Failed to commit changes\n");
+    }
+
+    repository_free(repo);
+    return result == 0 ? 0 : CMD_ERROR_EXEC_FAILED;
+}
+
+commit_ctx_t commit_ctx = {NULL};
+
+command_t command_commit_impl = {
     .name = "commit",
     .description = "Record changes to the repository",
     .usage = "vcs commit -m <message>",
-    .ctx = NULL,
-    .validate = NULL,
-    .run = NULL,
+    .ctx = &commit_ctx,
+    .validate = command_commit_validate,
+    .run = command_commit_run,
     .cleanup = NULL};
 
 command_t command_status = {
@@ -166,10 +221,15 @@ command_t command_log = {
 
 command_t *command_init()
 {
-    return &command_init_obj;
+    return &command_init_impl;
 }
 
 command_t *command_add()
 {
-    return &command_add_obj;
+    return &command_add_impl;
+}
+
+command_t *command_commit()
+{
+    return &command_commit_impl;
 }

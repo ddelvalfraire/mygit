@@ -1,5 +1,8 @@
 #include "repository.h"
 #include "object.h"
+#include "staging.h"
+#include "config.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -15,48 +18,7 @@
 #define HEAD_REF "refs/heads/master"
 #define VCS_PATH_MAX 4096
 #define VCS_NAME_MAX 256
-#define INDEX_SIGNATURE 0x44495243 // "DIRC"
-#define INDEX_VERSION 2
-#define PATH_MAX 4096
 
-typedef struct
-{
-    uint32_t ctime_sec;
-    uint32_t ctime_nsec;
-    uint32_t mtime_sec;
-    uint32_t mtime_nsec;
-    uint32_t dev;
-    uint32_t ino;
-    uint32_t mode;
-    uint32_t uid;
-    uint32_t gid;
-    uint32_t size;
-    unsigned char sha1[20];
-    uint16_t flags;
-    char path[PATH_MAX];
-} index_entry_t;
-
-// Hash table entry structure
-typedef struct
-{
-    char path[PATH_MAX]; // key
-    index_entry_t entry; // value
-    UT_hash_handle hh;   // makes this structure hashable
-} index_hash_entry_t;
-
-typedef struct
-{
-    uint32_t signature; // DIRC
-    uint32_t version;   // 2
-    uint32_t entry_count;
-} index_header_t;
-
-// Modified index structure
-typedef struct
-{
-    index_header_t header;
-    index_hash_entry_t *entries; // Hash table of entries
-} index_t;
 
 struct repository
 {
@@ -403,13 +365,7 @@ static void update_index_entry(index_t *index, const char *path, const char *has
     entry->entry.uid = st->st_uid;
     entry->entry.gid = st->st_gid;
     entry->entry.size = st->st_size;
-
-    // Convert hash to binary
-    for (int i = 0; i < 20; i++)
-    {
-        sscanf(hash + (i * 2), "%2hhx", &entry->entry.sha1[i]);
-    }
-
+    strcpy(entry->entry.hash, hash);
     strcpy(entry->entry.path, path);
     entry->entry.flags = strlen(path);
 }
@@ -479,7 +435,7 @@ static int stage_files(repository_t *repo, UT_array *arr)
     }
 
     write_index(repo->index_path, index);
-    
+
     return 0;
 }
 
@@ -501,5 +457,87 @@ int repository_add(repository_t *repo, int size, char **files)
     }
 
     utarray_free(arr);
+    return 0;
+}
+
+static int update_head(repository_t *repo, const char *commit_hash)
+{
+    char head_path[VCS_PATH_MAX];
+    snprintf(head_path, sizeof(head_path), "%s/%s", repo->vcsdir, HEAD_FILE);
+
+    FILE *fp = fopen(head_path, "w");
+    if (!fp)
+    {
+        fprintf(stderr, "Error opening HEAD file: %s\n", strerror(errno));
+        return -1;
+    }
+
+    if (fprintf(fp, "%s\n", commit_hash) < 0)
+    {
+        fprintf(stderr, "Error writing to HEAD file: %s\n", strerror(errno));
+        fclose(fp);
+        return -1;
+    }
+
+    fclose(fp);
+    return 0;
+}
+
+static int reset_index(repository_t *repo)
+{
+    if (unlink(repo->index_path) != 0)
+    {
+        fprintf(stderr, "Error: Failed to delete index file '%s': %s\n", repo->index_path, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+static int write_tree(repository_t *repo, index_t *index)
+{
+    object_t *tree = object_init(OBJ_TREE);
+    if (!tree)
+    {
+        fprintf(stderr, "Error: Failed to initialize tree object\n");
+        return -1;
+    }
+
+    object_data_t data = {
+        .tree = {.index = index}};
+
+   if (object_update(tree, data) != 0)
+    {
+        fprintf(stderr, "Error: Failed to update object\n");
+        object_free(tree);
+        return -1;
+    }
+
+    if (object_write(tree, NULL) != 0)
+    {
+        fprintf(stderr, "Error: Failed to write object\n");
+        object_free(tree);
+        return -1;
+    }
+
+    return 0;
+}
+
+int repository_commit(repository_t *repo, const char *message)
+{
+
+    index_t *index = load_index(repo->index_path);
+    if (!index)
+    {
+        fprintf(stderr, "Error: Failed to load index\n");
+        return -1;
+    }
+
+
+       if(write_tree(repo, index) != 0) {
+           fprintf(stderr, "Error: Failed to write tree object\n");
+           return -1;
+        }
+
+    printf("Committed %d files\n", index->header.entry_count);
     return 0;
 }

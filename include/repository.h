@@ -10,5 +10,6 @@ void repository_free(repository_t *repo);
 
 repository_t *repository_open();
 int repository_add(repository_t *repo, int size, char **files);
+int repository_commit(repository_t *repo, const char *message);
 
 #endif // REPOSITORY_H

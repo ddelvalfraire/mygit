@@ -1,9 +1,9 @@
 #ifndef OBJECT_H
 #define OBJECT_H
 
-#define HEX_SIZE (SHA256_SIZE * 2 + 1)
-#define SHA256_SIZE 32
-#define FILE_MAX 4096
+#include "staging.h"
+
+
 
 typedef enum
 {
@@ -17,6 +17,9 @@ typedef union {
    struct {
         const char *filepath;
    } blob;
+   struct {
+        index_t *index;
+   } tree;
 } object_data_t;
 
 

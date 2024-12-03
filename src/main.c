@@ -20,6 +20,10 @@ int main(int argc, char **argv)
     {
         command_execute(command_add(), argc, argv);
     }
+    else if (strcmp(command, "commit") == 0)
+    {
+        command_execute(command_commit(), argc, argv);
+    }
     else
     {
         printf("Unknown command: %s\n", command);
