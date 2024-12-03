@@ -1,4 +1,6 @@
 #include "parser.h"
+#include "util.h"
+#include "object_types.h"
 
 #include <stdio.h>
 
@@ -132,8 +134,7 @@ static parse_result_t parser_parse_header(parser_t *parser, object_t *out_obj)
     return PARSE_OK;
 }
 
-
-static parse_result_t parser_read_content(parser_t* parser, object_t* out_obj)
+static parse_result_t parser_read_content(parser_t *parser, object_t *out_obj)
 {
     if (!out_obj->header.content_size)
     {
@@ -204,20 +205,70 @@ static parse_result_t parse_tree_data(parser_t *parser, size_t content_size, tre
     return PARSE_OK;
 }
 
+static int parse_commit_data(FILE *fp, commit_data_t *data) {
+    char line[1024];
+    char *ptr;
+
+    // Read header lines (tree, parent, author, committer)
+    while (fgets(line, sizeof(line), fp)) {
+        // Empty line marks start of message
+        if (line[0] == '\n') break;
+        
+        ptr = strchr(line, ' ');
+        if (!ptr) return -1;
+        ptr++; // Skip space
+        
+        // Remove newline
+        char *nl = strchr(line, '\n');
+        if (nl) *nl = '\0';
+        
+        if (strncmp(line, "tree", 4) == 0) {
+            strncpy(data->tree_hash, ptr, HEX_SIZE);
+        }
+        else if (strncmp(line, "parent", 6) == 0) {
+            strncpy(data->parent_hash, ptr, HEX_SIZE); 
+        }
+        else if (strncmp(line, "author", 6) == 0) {
+            sscanf(ptr, "%s <%s> %ld", data->author.name, data->author.email, &data->author.time);
+        }
+        else if (strncmp(line, "committer", 9) == 0) {
+            sscanf(ptr, "%s <%s> %ld", data->committer.name, data->committer.email, &data->committer.time);
+        }
+    }
+
+    // Read message 
+    size_t msg_len = 0;
+    while (fgets(line, sizeof(line), fp)) {
+        size_t len = strlen(line);
+        if (msg_len + len >= COMMIT_MSG_MAX) return -1;
+        strcat(data->message + msg_len, line);
+        msg_len += len;
+    }
+
+    return 0;
+}
 static parse_result_t parser_parse_content(parser_t *parser, object_t *out_obj)
 {
 
     parse_result_t err = PARSE_OK;
     size_t content_size = out_obj->header.content_size;
-    switch(out_obj->header.type)
+    switch (out_obj->header.type)
     {
-        case OBJ_TREE:
-            err = parse_tree_data(parser,content_size, out_obj);
-            break;
-        default:
-            fprintf(stderr, "Error: Invalid object type\n");
-            err =  PARSE_ERROR_INVALID_TYPE;
-            break;
+    case OBJ_TREE:
+    {
+        tree_data_t *data = (tree_data_t *)out_obj->data;
+        err = parse_tree_data(parser, content_size, data);
+        break;
+    }
+    case OBJ_COMMIT:
+    {
+        commit_data_t *data = (commit_data_t *)out_obj->data;
+        err = parse_commit_data(parser, data);
+    }
+    default:
+        fprintf(stderr, "Error: Invalid object type\n");
+        err = PARSE_ERROR_INVALID_TYPE;
+        break;
     }
     return err;
 }

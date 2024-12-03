@@ -6,7 +6,7 @@ typedef struct command command_t;
 command_t *command_init();
 command_t *command_add();
 command_t *command_commit();
-command_t *status(void);
+command_t *command_status();
 // command_t *log(void);
 
 // Advanced commands (maybe implement later)

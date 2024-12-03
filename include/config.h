@@ -10,5 +10,6 @@
 #define COMMIT_MSG_MAX 512
 #define OBJECT_HEADER_MAX 27 // type(6) + space(1) + size(20) + null(1)
 #define OBJECT_PATH_MAX 78 // ".vcs/objects/"(12) + "xx/"(3) + hash(62) + null(1)
+#define MAX_CHILDREN 100
 
 #endif // CONFIG_H

@@ -14,8 +14,6 @@
 #include <libgen.h>
 #include <uthash.h>
 
-
-
 static void *object_data_allocate(object_type_t type)
 {
     switch (type)
@@ -66,8 +64,6 @@ void object_free(object_t *obj)
 
     obj = NULL;
 }
-
-
 
 static const char *object_type_to_string(object_type_t type)
 {
@@ -240,13 +236,12 @@ static int object_compute_hash(object_t *obj, char *hash)
     return 0;
 }
 
-
 static int update_blob(object_t *obj, object_update_t data)
 {
     blob_data_t *blob = (blob_data_t *)obj->data;
 
     // Check file size first
-    size_t size = get_filesize(data.blob.filepath);
+    size_t size = get_filesize_by_filepath(data.blob.filepath);
     if (size > FILE_MAX)
     {
         fprintf(stderr, "Error: File '%s' is too large (%zu bytes, max is %d)\n",
@@ -375,16 +370,16 @@ static int update_commit(object_t *obj, object_update_t data)
     commit->committer.time = data.commit.committer_time;
 
     // Calculate total size
-    obj->header.content_size = 
-        5 + HEX_SIZE + 1 +                              // "tree <hash>\n"
-        7 + strlen(commit->author.name) + 2 +           // "author <name> "
-        strlen(commit->author.email) + 2 +              // "<email> "
-        20 + 1 +                                        // timestamp + \n
-        10 + strlen(commit->committer.name) + 2 +       // "committer <name> "
-        strlen(commit->committer.email) + 2 +           // "<email> "
-        20 + 1 +                                        // timestamp + \n
-        1 +                                             // blank line
-        strlen(commit->message);                        // message
+    obj->header.content_size =
+        5 + HEX_SIZE + 1 +                        // "tree <hash>\n"
+        7 + strlen(commit->author.name) + 2 +     // "author <name> "
+        strlen(commit->author.email) + 2 +        // "<email> "
+        20 + 1 +                                  // timestamp + \n
+        10 + strlen(commit->committer.name) + 2 + // "committer <name> "
+        strlen(commit->committer.email) + 2 +     // "<email> "
+        20 + 1 +                                  // timestamp + \n
+        1 +                                       // blank line
+        strlen(commit->message);                  // message
 
     return 0;
 }
@@ -403,7 +398,6 @@ int object_update(object_t *obj, object_update_t data)
         return -1;
     }
 }
-
 
 static int write_tree_data(FILE *fp, tree_data_t *data)
 {
@@ -433,7 +427,10 @@ static int write_commit_data(FILE *fp, commit_data_t *data)
     {
         return -1;
     }
-
+    if (fprintf(fp, "parent %s\n", data->parent_hash) < 0)
+    {
+        return -1;
+    }
     if (fprintf(fp, "author %s <%s> %ld\n", data->author.name, data->author.email, data->author.time) < 0)
     {
         return -1;
@@ -606,9 +603,9 @@ static int object_parse_header(char *header, object_t *obj)
     return 0;
 }
 
-static int object_read_content(FILE *fp, char* content)
+static int object_read_content(FILE *fp, char *content)
 {
-    size_t file_size = get_filesize(fp);
+    size_t file_size = get_filesize_by_fp(fp);
 
     if (file_size > FILE_MAX)
     {
@@ -616,7 +613,6 @@ static int object_read_content(FILE *fp, char* content)
                 file_size, FILE_MAX);
         return -1;
     }
-
 
     if (fread(content, 1, file_size, fp) != file_size)
     {
@@ -626,16 +622,37 @@ static int object_read_content(FILE *fp, char* content)
     return 0;
 }
 
-
 int object_read(object_t *obj, const char *hash)
 {
     parser_t *parser = parser_init();
 
     parse_result_t err = parser_read_object(parser, hash, obj);
-    
-    if (err != PARSE_OK) print_parser_error(err);
+
+    if (err != PARSE_OK)
+        print_parse_error(err);
 
     parser_free(parser);
 
     return err == PARSE_OK ? 0 : -1;
+}
+
+int object_get_commit_tree_hash(const char *commit_hash, char *out_tree_hash)
+{
+    object_t *commit = object_init(OBJ_COMMIT);
+    if (!commit)
+    {
+        return -1;
+    }
+
+    if (object_read(commit, commit_hash) != 0)
+    {
+        object_free(commit);
+        return -1;
+    }
+
+    commit_data_t *data = (commit_data_t *)commit->data;
+    strncpy(out_tree_hash, data->tree_hash, HEX_SIZE);
+
+    object_free(commit);
+    return 0;
 }

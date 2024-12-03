@@ -45,5 +45,6 @@ void object_free(object_t *obj);
 int object_update(object_t *obj, object_update_t data);
 int object_write(object_t *obj, char *out_hash);
 int object_read(object_t *obj, const char *hash);
+int object_get_commit_tree_hash(const char *commit_hash, char *out_tree_hash);
 
 #endif // OBJECT_H

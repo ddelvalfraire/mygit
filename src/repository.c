@@ -27,6 +27,7 @@ struct repository
     char head_ref[VCS_NAME_MAX];
     char branch_name[VCS_NAME_MAX];
     char recent_commit[HEX_SIZE];
+    int initialized;
 };
 
 
@@ -174,24 +175,25 @@ repository_t *repository_init()
     return repo;
 }
 
-static int load_latest_commit(repository_t *repo)
-{
+static int load_latest_commit(repository_t *repo) {
     char branch_path[VCS_PATH_MAX];
     snprintf(branch_path, sizeof(branch_path), "%s/refs/heads/%s",
              repo->vcsdir, repo->branch_name);
 
     FILE *fp = fopen(branch_path, "r");
-    if (!fp)
-    {
-        // No commits yet
+    if (!fp) {
+        // No commits yet - no file
         memset(repo->recent_commit, 0, HEX_SIZE);
         return 0;
     }
 
-    if (!fgets(repo->recent_commit, HEX_SIZE, fp))
-    {
+    // Check if file is empty
+    if (fgets(repo->recent_commit, HEX_SIZE, fp) == NULL || 
+        repo->recent_commit[0] == '\0') {
+        // No commits yet - empty file
+        memset(repo->recent_commit, 0, HEX_SIZE);
         fclose(fp);
-        return -1;
+        return 0;
     }
 
     // Remove newline
@@ -255,7 +257,8 @@ repository_t *repository_open()
         repository_free(repo);
         return NULL;
     }
-
+    printf("Opened repository at %s\n", repo->vcsdir);
+    repo->initialized = 1;
     return repo;
 }
 
@@ -542,7 +545,7 @@ static int write_commit(repository_t *repo, const char *tree_hash, const char *m
     object_update_t data = {
         .commit = {
             .tree_hash = tree_hash,
-            .parent_hash = NULL,
+            .parent_hash = repo->recent_commit,
             .message = message,
             .author_name = author_name,
             .author_email = author_email,
@@ -618,7 +621,8 @@ int repository_commit(repository_t *repo, const char *message)
     return 0;
 }
 
-int repository_status(repository_t *repo)
-{
+
+int repository_status(repository_t *repo) {
+
     return 0;
 }

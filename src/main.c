@@ -24,6 +24,10 @@ int main(int argc, char **argv)
     {
         command_execute(command_commit(), argc, argv);
     }
+    else if (strcmp(command, "status") == 0)
+    {
+        command_execute(command_status(), argc, argv);
+    }
     else
     {
         printf("Unknown command: %s\n", command);

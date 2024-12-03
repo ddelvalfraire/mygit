@@ -4,9 +4,10 @@
 #include "config.h"
 #include "object.h"
 
+#include <time.h>
 #include <uthash.h>
 #include <sys/syslimits.h>
-
+#include <sys/types.h>
 
 typedef struct
 {
@@ -66,6 +67,7 @@ typedef struct
 typedef struct
 {
     char tree_hash[HEX_SIZE];
+    char parent_hash[HEX_SIZE];
     signature_t author;
     signature_t committer;
     char message[COMMIT_MSG_MAX];

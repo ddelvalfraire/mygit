@@ -201,13 +201,46 @@ command_t command_commit_impl = {
     .run = command_commit_run,
     .cleanup = NULL};
 
-command_t command_status = {
+
+static int command_status_validate(command_t *self, int argc, char **argv)
+{
+    if (argc != 2)
+    {
+        fprintf(stderr, "Error: Invalid number of arguments\n");
+        fprintf(stderr, "Usage: %s\n", self->usage);
+        return CMD_ERROR_INVALID_ARGUMENTS;
+    }
+
+    return 0;
+}
+
+static int command_status_run(command_t *self, int argc, char **argv)
+{
+    repository_t *repo = repository_open();
+    if (!repo)
+    {
+        fprintf(stderr, "Error: Failed to open repository\n");
+        return CMD_ERROR_EXEC_FAILED;
+    }
+   printf("comand status run\n");
+    int result = repository_status(repo);
+    if (result != 0)
+    {
+        fprintf(stderr, "Error: Failed to show status\n");
+    }
+
+    repository_free(repo);
+    return result == 0 ? 0 : CMD_ERROR_EXEC_FAILED;
+}
+
+
+command_t command_status_impl = {
     .name = "status",
     .description = "Show the working tree status",
     .usage = "vcs status",
     .ctx = NULL,
-    .validate = NULL,
-    .run = NULL,
+    .validate = command_status_validate,
+    .run = command_status_run,
     .cleanup = NULL};
 
 command_t command_log = {
@@ -232,4 +265,9 @@ command_t *command_add()
 command_t *command_commit()
 {
     return &command_commit_impl;
+}
+
+command_t *command_status()
+{
+    return &command_status_impl;
 }

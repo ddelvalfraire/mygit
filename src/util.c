@@ -5,7 +5,7 @@
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <errno.h>
-
+#include <string.h>
 
 int create_directory(const char *path)
 {
@@ -22,10 +22,20 @@ int create_directory(const char *path)
     return 0;
 }
 
-size_t get_filesize(const char *filepath)
+size_t get_filesize_by_filepath(const char *filepath)
 {
     struct stat st;
     if (stat(filepath, &st) == 0)
+    {
+        return st.st_size;
+    }
+    return 0;
+}
+
+size_t get_filesize_by_fp(const FILE *fp)
+{
+    struct stat st;
+    if (fstat(fileno(fp), &st) == 0)
     {
         return st.st_size;
     }
@@ -41,7 +51,7 @@ int hash_to_hex(const unsigned char *hash, char *hex)
     return 0;
 }
 
-static int filepath_from_hash(const char *hash, char *filepath)
+int filepath_from_hash(const char *hash, char *filepath)
 {
     const int fp_size = HEX_SIZE + 14; //
     snprintf(filepath, fp_size, ".vcs/objects/%c%c/%s",

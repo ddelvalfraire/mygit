@@ -1,7 +1,7 @@
 #ifndef TREE_H
 #define TREE_H
 
-#define MAX_CHILDREN 100
+#include "config.h"
 
 typedef struct node_t
 {
