@@ -5,6 +5,7 @@
 
 #include <stdlib.h>
 #include <uthash.h>
+#include <utarray.h>
 
 
 typedef struct
@@ -43,6 +44,13 @@ typedef struct
 {
     index_header_t header;
     index_hash_entry_t *entries; // Hash table of entries
+    char *filepath;
 } index_t;
+
+index_t *index_init(const char *filepath);
+void index_free(index_t *index);
+
+int index_stage_files(index_t *index, UT_array *files);
+int index_write(index_t *index);
 
 #endif // STAGING_H

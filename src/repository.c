@@ -26,7 +26,9 @@ struct repository
     char index_path[VCS_PATH_MAX];
     char head_ref[VCS_NAME_MAX];
     char branch_name[VCS_NAME_MAX];
+    char recent_commit[HEX_SIZE];
 };
+
 
 static const char *REPO_DIRS[] = {
     "objects",
@@ -166,9 +168,36 @@ repository_t *repository_init()
     // Set HEAD and branch name
     strncpy(repo->head_ref, HEAD_REF, VCS_NAME_MAX - 1);
     strncpy(repo->branch_name, "master", VCS_NAME_MAX - 1);
+    memset(repo->recent_commit, 0, HEX_SIZE);
 
     printf("Initialized empty repository in %s\n", repo->vcsdir);
     return repo;
+}
+
+static int load_latest_commit(repository_t *repo)
+{
+    char branch_path[VCS_PATH_MAX];
+    snprintf(branch_path, sizeof(branch_path), "%s/refs/heads/%s",
+             repo->vcsdir, repo->branch_name);
+
+    FILE *fp = fopen(branch_path, "r");
+    if (!fp)
+    {
+        // No commits yet
+        memset(repo->recent_commit, 0, HEX_SIZE);
+        return 0;
+    }
+
+    if (!fgets(repo->recent_commit, HEX_SIZE, fp))
+    {
+        fclose(fp);
+        return -1;
+    }
+
+    // Remove newline
+    repo->recent_commit[strcspn(repo->recent_commit, "\n")] = 0;
+    fclose(fp);
+    return 0;
 }
 
 repository_t *repository_open()
@@ -217,6 +246,14 @@ repository_t *repository_open()
     else
     {
         strncpy(repo->branch_name, "detached", VCS_NAME_MAX - 1);
+    }
+
+    // Load latest commit hash
+    if (load_latest_commit(repo) != 0)
+    {
+        fprintf(stderr, "Error loading latest commit\n");
+        repository_free(repo);
+        return NULL;
     }
 
     return repo;
@@ -308,160 +345,9 @@ static int parse_file_args(int argc, char **argv, UT_array *arr)
     return 0;
 }
 
-static index_t *load_index(const char *index_path)
-{
-    index_t *index = calloc(1, sizeof(index_t));
-    index->entries = NULL; // Initialize hash table
-
-    FILE *fp = fopen(index_path, "rb");
-    if (!fp)
-    {
-        index->header.signature = INDEX_SIGNATURE;
-        index->header.version = INDEX_VERSION;
-        index->header.entry_count = 0;
-        return index;
-    }
-
-    // Read header
-    fread(&index->header, sizeof(index_header_t), 1, fp);
-
-    // Read and hash entries
-    for (uint32_t i = 0; i < index->header.entry_count; i++)
-    {
-        index_hash_entry_t *entry = malloc(sizeof(index_hash_entry_t));
-        fread(&entry->entry, sizeof(index_entry_t), 1, fp);
-        strcpy(entry->path, entry->entry.path);
-        HASH_ADD_STR(index->entries, path, entry);
-    }
-
-    fclose(fp);
-    return index;
-}
-
-static void write_index(const char *index_path, index_t *index)
-{
-    char temp_path[PATH_MAX];
-    snprintf(temp_path, PATH_MAX, "%s.tmp", index_path);
-
-    FILE *fp = fopen(temp_path, "wb");
-    if (!fp)
-        return;
-
-    // Count entries
-    index->header.entry_count = HASH_COUNT(index->entries);
-
-    // Write header
-    fwrite(&index->header, sizeof(index_header_t), 1, fp);
-
-    // Write entries
-    index_hash_entry_t *entry, *tmp;
-    HASH_ITER(hh, index->entries, entry, tmp)
-    {
-        fwrite(&entry->entry, sizeof(index_entry_t), 1, fp);
-    }
-
-    fclose(fp);
-    rename(temp_path, index_path);
-}
-
-static void update_index_entry(index_t *index, const char *path, const char *hash, struct stat *st)
-{
-    index_hash_entry_t *entry;
-    HASH_FIND_STR(index->entries, path, entry);
-
-    if (!entry)
-    {
-        entry = malloc(sizeof(index_hash_entry_t));
-        strcpy(entry->path, path);
-        HASH_ADD_STR(index->entries, path, entry);
-    }
-
-    entry->entry.ctime_sec = st->st_ctimespec.tv_sec;
-    entry->entry.ctime_nsec = st->st_ctimespec.tv_nsec;
-    entry->entry.mtime_sec = st->st_mtimespec.tv_sec;
-    entry->entry.mtime_nsec = st->st_mtimespec.tv_nsec;
-    entry->entry.dev = st->st_dev;
-    entry->entry.ino = st->st_ino;
-    entry->entry.mode = st->st_mode;
-    entry->entry.uid = st->st_uid;
-    entry->entry.gid = st->st_gid;
-    entry->entry.size = st->st_size;
-    strcpy(entry->entry.hash, hash);
-    strcpy(entry->entry.path, path);
-    entry->entry.flags = strlen(path);
-}
-
-static int write_staged_file(repository_t *repo, index_t *index, const char *filepath)
-{
-    struct stat st;
-    if (stat(filepath, &st) != 0)
-    {
-        fprintf(stderr, "Error: Cannot stat file '%s'\n", filepath);
-        return -1;
-    }
-
-    // Create and write blob object
-    object_t *obj = object_init(OBJ_BLOB);
-    if (!obj)
-    {
-        fprintf(stderr, "Error: Failed to initialize object\n");
-        return -1;
-    }
-
-    const object_data_t data = {
-        .blob = {.filepath = filepath}};
-
-    if (object_update(obj, data) != 0)
-    {
-        fprintf(stderr, "Error: Failed to update object\n");
-        object_free(obj);
-        return -1;
-    }
-
-    char hash[HEX_SIZE];
-    if (object_write(obj, hash) != 0)
-    {
-        fprintf(stderr, "Error: Failed to write object\n");
-        object_free(obj);
-        return -1;
-    }
-
-    update_index_entry(index, filepath, hash, &st);
-
-    printf("Added '%s'\n", filepath);
-    object_free(obj);
-    return 0;
-}
-
-static int stage_files(repository_t *repo, UT_array *arr)
-{
-    if (utarray_len(arr) == 0)
-    {
-        printf("No files to stage\n");
-        return 0;
-    }
-
-    index_t *index = load_index(repo->index_path);
-
-    char **p = NULL;
-    while ((p = (char **)utarray_next(arr, p)))
-    {
-
-        if (write_staged_file(repo, index, *p) != 0)
-        {
-            printf("Error: Failed to stage file '%s'\n", *p);
-            fprintf(stderr, "Error: Failed to stage file '%s'\n", *p);
-            return -1;
-        }
-    }
-
-    write_index(repo->index_path, index);
-
-    return 0;
-}
-
 int repository_add(repository_t *repo, int size, char **files)
 {
+    index_t *index = index_init(repo->index_path);
     UT_array *arr;
     utarray_new(arr, &ut_str_icd);
 
@@ -471,13 +357,14 @@ int repository_add(repository_t *repo, int size, char **files)
         return -1;
     }
 
-    if (stage_files(repo, arr) != 0)
+    if (index_stage_files(index, arr) != 0)
     {
         utarray_free(arr);
         return -1;
     }
 
     utarray_free(arr);
+    index_free(index);
     return 0;
 }
 
@@ -499,6 +386,8 @@ static int update_branch_ref(repository_t *repo, const char *branch, const char 
         fclose(fp);
         return -1;
     }
+
+    strcpy(repo->branch_name, branch);
 
     fclose(fp);
     return 0;
@@ -546,7 +435,7 @@ static int write_tree(repository_t *repo, index_t *index, char *out_tree_hash)
         return -1;
     }
 
-    object_data_t data = {
+    object_update_t data = {
         .tree = {.index = index}};
 
     if (object_update(tree, data) != 0)
@@ -650,9 +539,10 @@ static int write_commit(repository_t *repo, const char *tree_hash, const char *m
         strcpy(committer_email, author_email);
     }
 
-    object_data_t data = {
+    object_update_t data = {
         .commit = {
             .tree_hash = tree_hash,
+            .parent_hash = NULL,
             .message = message,
             .author_name = author_name,
             .author_email = author_email,
@@ -688,7 +578,7 @@ static int write_commit(repository_t *repo, const char *tree_hash, const char *m
 int repository_commit(repository_t *repo, const char *message)
 {
 
-    index_t *index = load_index(repo->index_path);
+    index_t *index = index_init(repo->index_path);
     if (!index)
     {
         fprintf(stderr, "Error: Failed to load index\n");
@@ -723,7 +613,12 @@ int repository_commit(repository_t *repo, const char *message)
         return -1;
     }
 
-    free(index);
-    
+    index_free(index);
+
+    return 0;
+}
+
+int repository_status(repository_t *repo)
+{
     return 0;
 }
