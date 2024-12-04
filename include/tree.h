@@ -13,7 +13,7 @@ typedef struct node_t
 } node_t;
 
 // Function prototypes
-node_t *createNode(char *name, int isFile);
+node_t *createNode(char *name);
 void addPath(node_t *root, char *path, void* data);
 void printTree(node_t *node, int depth);
 void freeTree(node_t *node); // Added memory cleanup function

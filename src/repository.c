@@ -2,6 +2,7 @@
 #include "object.h"
 #include "staging.h"
 #include "config.h"
+#include "tree_diff.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -371,10 +372,10 @@ int repository_add(repository_t *repo, int size, char **files)
     return 0;
 }
 
-static int update_branch_ref(repository_t *repo, const char *branch, const char *commit_hash)
+static int update_branch_ref(repository_t *repo, const char *commit_hash)
 {
     char branch_path[VCS_PATH_MAX];
-    snprintf(branch_path, sizeof(branch_path), "%s/refs/heads/%s", repo->vcsdir, branch);
+    snprintf(branch_path, sizeof(branch_path), "%s/refs/heads/%s", repo->vcsdir, repo->branch_name);
 
     FILE *fp = fopen(branch_path, "w");
     if (!fp)
@@ -389,8 +390,6 @@ static int update_branch_ref(repository_t *repo, const char *branch, const char 
         fclose(fp);
         return -1;
     }
-
-    strcpy(repo->branch_name, branch);
 
     fclose(fp);
     return 0;
@@ -580,31 +579,30 @@ static int write_commit(repository_t *repo, const char *tree_hash, const char *m
 
 int repository_commit(repository_t *repo, const char *message)
 {
-
     index_t *index = index_init(repo->index_path);
     if (!index)
     {
-        fprintf(stderr, "Error: Failed to load index\n");
+        printf("Error: Failed to load index\n");
         return -1;
     }
 
     char tree_hash[HEX_SIZE];
     if (write_tree(repo, index, tree_hash) != 0)
     {
-        fprintf(stderr, "Error: Failed to write tree object\n");
+        printf("Error: Failed to write tree object\n");
         return -1;
     }
 
     char commit_hash[HEX_SIZE];
     if (write_commit(repo, tree_hash, message, commit_hash) != 0)
     {
-        fprintf(stderr, "Error: Failed to write commit object\n");
+        printf("Error: Failed to write commit object\n");
         return -1;
     }
 
-    if (update_branch_ref(repo, repo->branch_name, commit_hash) != 0)
+    if (update_branch_ref(repo, commit_hash) != 0)
     {
-        fprintf(stderr, "Error: Failed to update branch ref\n");
+        printf("Error: Failed to update branch ref\n");
         return -1;
     }
 
@@ -612,7 +610,7 @@ int repository_commit(repository_t *repo, const char *message)
 
     if (reset_index(repo) != 0)
     {
-        fprintf(stderr, "Error: Failed to reset index\n");
+        printf("Error: Failed to reset index\n");
         return -1;
     }
 
@@ -621,8 +619,16 @@ int repository_commit(repository_t *repo, const char *message)
     return 0;
 }
 
+int repository_status(repository_t *repo) 
+{
+    diff_t *diff = diff_init();
 
-int repository_status(repository_t *repo) {
+    walk_working_dir(".", diff);
 
+    printf("commit %s\n", repo->recent_commit);
+    walk_commit_tree(repo->recent_commit, diff);
+    diff_print(diff);
+
+    diff_free(diff);
     return 0;
 }

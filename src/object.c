@@ -233,6 +233,7 @@ static int object_compute_hash(object_t *obj, char *hash)
 
     EVP_MD_CTX_free(ctx);
     hash_to_hex(hash_bytes, hash);
+   strcpy(obj->header.hash, hash);
     return 0;
 }
 
@@ -284,6 +285,7 @@ static tree_entry_t *index_entry_to_tree_entry(index_entry_t *index_entry)
     tree_entry->mode = index_entry->mode;
     strcpy(tree_entry->name, index_entry->path);
     strcpy(tree_entry->hash, index_entry->hash);
+    
 
     return tree_entry;
 }
@@ -322,6 +324,8 @@ static void process_tree(node_t *node, object_t *curr_tree)
         {
             // Create new tree object for subdirectory
             object_t *child_tree = object_init(OBJ_TREE);
+            tree_data_t *child_data = (tree_data_t *)child_tree->data;
+            strcpy(child_data->dirname, node->children[i]->name);
             process_tree(node->children[i], child_tree);
 
             // Write child tree and add it to current tree
@@ -344,7 +348,7 @@ static int update_tree(object_t *obj, object_update_t data)
     strcpy(tree_data->dirname, ".");
 
     index_t *index = data.tree.index;
-    node_t *root = createNode(".", 0);
+    node_t *root = createNode(".");
 
     index_hash_entry_t *entry;
     for (entry = index->entries; entry != NULL; entry = entry->hh.next)
@@ -371,7 +375,6 @@ static int update_commit(object_t *obj, object_update_t data)
 
     // Calculate total size
     obj->header.content_size =
-        5 + HEX_SIZE + 1 +                        // "tree <hash>\n"
         7 + strlen(commit->author.name) + 2 +     // "author <name> "
         strlen(commit->author.email) + 2 +        // "<email> "
         20 + 1 +                                  // timestamp + \n
@@ -404,17 +407,19 @@ static int write_tree_data(FILE *fp, tree_data_t *data)
     tree_entry_t *entry;
     for (entry = data->entries; entry != NULL; entry = entry->hh.next)
     {
-        // Write "<mode> <name>\0"
-        char mode_str[8];
-        snprintf(mode_str, sizeof(mode_str), "%o", entry->mode);
-        if (fprintf(fp, "%s %s%c", mode_str, entry->name, '\0') < 0)
+        // Write mode directly 
+        if (fprintf(fp, "%o %s", entry->mode, entry->name) < 0)
         {
             return -1;
         }
 
-        // Write hash
-        if (fprintf(fp, "%s", entry->hash) < 0)
-        {
+        // Write null separator
+        if (fputc('\0', fp) == EOF) {
+            return -1;
+        }
+
+        // Write hash bytes directly
+        if (fwrite(entry->hash, 1, HEX_SIZE, fp) != HEX_SIZE) {
             return -1;
         }
     }
@@ -622,18 +627,182 @@ static int object_read_content(FILE *fp, char *content)
     return 0;
 }
 
+int parse_commit_data(commit_data_t *commit, char *content)
+{
+    char *line = content;
+    char *next_line;
+    while ((next_line = strchr(line, '\n')) != NULL)
+    {
+        *next_line = '\0';
+
+        if (strncmp(line, "tree ", 5) == 0)
+        {
+            strncpy(commit->tree_hash, line + 5, HEX_SIZE);
+        }
+        else if (strncmp(line, "parent ", 7) == 0)
+        {
+            strncpy(commit->parent_hash, line + 7, HEX_SIZE);
+        }
+        else if (strncmp(line, "author ", 7) == 0)
+        {
+            sscanf(line + 7, "%s %s %ld",
+                   commit->author.name,
+                   commit->author.email,
+                   &commit->author.time);
+        }
+        else if (strncmp(line, "committer ", 10) == 0)
+        {
+            sscanf(line + 10, "%s %s %ld",
+                   commit->committer.name,
+                   commit->committer.email,
+                   &commit->committer.time);
+        }
+        else if (strlen(line) == 0)
+        {
+            break;
+        }
+
+        line = next_line + 1;
+    }
+
+    // Copy message
+    strcpy(commit->message, line);
+    return 0;
+}
+int parse_tree_data(tree_data_t *tree, char *content) 
+{
+    char *ptr = content;
+    
+    while (*ptr) {
+        // Parse <mode> <filename> up to first \0
+        mode_t mode;
+        char name[NAME_MAX];
+        sscanf(ptr, "%ho %s", &mode, name);
+        ptr += strlen(ptr) + 1;  // Skip first \0
+        
+        // Next 64 chars + null are hash
+        char hash[HEX_SIZE] = {0};  // 64 hex chars + null
+        strncpy(hash, ptr, HEX_SIZE);
+        ptr += HEX_SIZE;  // Skip hash + null
+        
+        // Store entry
+        tree_entry_t *entry = malloc(sizeof(tree_entry_t));
+        entry->mode = mode;
+        strcpy(entry->name, name);
+        strcpy(entry->hash, hash);
+        HASH_ADD_STR(tree->entries, name, entry);
+        tree->size++;
+    }
+    return 0;
+}
 int object_read(object_t *obj, const char *hash)
 {
-    parser_t *parser = parser_init();
+    char obj_path[PATH_MAX];
+    snprintf(obj_path, sizeof(obj_path), ".vcs/objects/%c%c/%s",
+             hash[0], hash[1], hash + 2);
 
-    parse_result_t err = parser_read_object(parser, hash, obj);
+    FILE *fp = fopen(obj_path, "rb");
+    if (!fp) {
+        fprintf(stderr, "Error: Failed to open '%s'\n", obj_path);
+        return -1;
+    }
 
-    if (err != PARSE_OK)
-        print_parse_error(err);
+    // Get file size
+    fseek(fp, 0, SEEK_END);
+    long file_size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
 
-    parser_free(parser);
+    // Allocate buffer
+    char *buffer = malloc(file_size + 1);
+    if (!buffer) {
+        fprintf(stderr, "Error: Memory allocation failed\n");
+        fclose(fp);
+        return -1;
+    }
 
-    return err == PARSE_OK ? 0 : -1;
+    // Read file
+    if (fread(buffer, 1, file_size, fp) != file_size) {
+        fprintf(stderr, "Error: Failed to read file\n");
+        free(buffer);
+        fclose(fp);
+        return -1;
+    }
+    buffer[file_size] = '\0';
+    fclose(fp);
+
+    // Parse header (format: "<type> <size>")
+    char type_str[32];
+    size_t content_size;
+    if (sscanf(buffer, "%s %zu", type_str, &content_size) != 2) {
+        fprintf(stderr, "Error: Invalid header format\n");
+        free(buffer);
+        fclose(fp);
+        return -1;
+    }
+    printf("type_str: %s\n", type_str);
+    printf("content_size: %zu\n", content_size);
+
+    // Set object type and content size
+    if (strcmp(type_str, "blob") == 0) {
+        obj->header.type = OBJ_BLOB;
+    } else if (strcmp(type_str, "tree") == 0) {
+        obj->header.type = OBJ_TREE;
+    } else if (strcmp(type_str, "commit") == 0) {
+        obj->header.type = OBJ_COMMIT;
+    } else {
+        fprintf(stderr, "Error: Unknown object type '%s'\n", type_str);
+        free(buffer);
+        fclose(fp);
+        return -1;
+    }
+    obj->header.content_size = content_size;
+    strcpy(obj->header.hash, hash);
+
+    // read the rest of the file
+    char *content = memchr(buffer, '\0', file_size);
+    if (!content)
+    {
+        fprintf(stderr, "Error: Invalid object format - no content delimiter\n");
+        free(buffer);
+        fclose(fp);
+        return -1;
+    }
+    content++; // Skip past null byte
+
+    switch (obj->header.type)
+    {
+        case OBJ_COMMIT:
+        {
+            commit_data_t *commit = (commit_data_t *)obj->data;
+            if (parse_commit_data(commit, content) != 0)
+            {
+                fprintf(stderr, "Error: Failed to parse commit data\n");
+                free(buffer);
+                return -1;
+            }
+            break;
+        }
+        case OBJ_TREE:
+        {
+            tree_data_t *tree = (tree_data_t *)obj->data;
+            if (parse_tree_data(tree, content) != 0)
+            {
+                fprintf(stderr, "Error: Failed to parse tree data\n");
+                free(buffer);
+                return -1;
+            }
+            break;
+        }
+        default:
+            fprintf(stderr, "Error: Unsupported object type\n");
+            free(buffer);
+            return -1;
+    }
+
+
+    free(buffer);
+    
+    return 0;
 }
 
 int object_get_commit_tree_hash(const char *commit_hash, char *out_tree_hash)

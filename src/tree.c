@@ -3,7 +3,7 @@
 #include <string.h>
 #include "tree.h"
 
-node_t *createNode(char *name, int isFile)
+node_t *createNode(char *name)
 {
     node_t *node = malloc(sizeof(node_t));
     if (!node)
@@ -16,12 +16,11 @@ node_t *createNode(char *name, int isFile)
         return NULL;
     }
 
-    node->is_file = isFile;
+    node->is_file = 0;
     node->child_count = 0;
     return node;
 }
-
-void addPath(node_t *root, char *path, void* data)
+void addPath(node_t *root, char *path, void *data)
 {
     if (!root || !path)
         return;
@@ -53,7 +52,7 @@ void addPath(node_t *root, char *path, void* data)
                 free(pathCopy);
                 return;
             }
-            node_t *newNode = createNode(token, 0);
+            node_t *newNode = createNode(token); 
             if (!newNode)
             {
                 free(pathCopy);
@@ -63,26 +62,15 @@ void addPath(node_t *root, char *path, void* data)
             current = newNode;
         }
     }
-    current->is_file = 1;
-    if (data) current->data = data;
+
+    // Last node becomes a file when data is assigned
+    if (data) {
+        current->data = data;
+        current->is_file = 1;
+    }
+
     free(pathCopy);
 }
-
-void printTree(node_t *node, int depth)
-{
-    if (!node)
-        return;
-
-    for (int i = 0; i < depth; i++)
-        printf("  ");
-    printf("%s%s\n", node->name, node->is_file ? " [File]" : "");
-
-    for (int i = 0; i < node->child_count; i++)
-    {
-        printTree(node->children[i], depth + 1);
-    }
-}
-
 void freeTree(node_t *node)
 {
     if (!node)
