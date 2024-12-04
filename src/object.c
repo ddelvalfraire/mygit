@@ -739,8 +739,6 @@ int object_read(object_t *obj, const char *hash)
         fclose(fp);
         return -1;
     }
-    printf("type_str: %s\n", type_str);
-    printf("content_size: %zu\n", content_size);
 
     // Set object type and content size
     if (strcmp(type_str, "blob") == 0) {

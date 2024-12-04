@@ -152,7 +152,9 @@ int command_commit_validate(command_t *self, int argc, char **argv)
         {
             ctx->message = argv[i + 1];
             break;
-        } else {
+        }
+        else
+        {
             fprintf(stderr, "Error: Invalid option '%s'\n", argv[i]);
             fprintf(stderr, "Usage: %s\n", self->usage);
             return -1;
@@ -201,7 +203,6 @@ command_t command_commit_impl = {
     .run = command_commit_run,
     .cleanup = NULL};
 
-
 static int command_status_validate(command_t *self, int argc, char **argv)
 {
     if (argc != 2)
@@ -222,7 +223,6 @@ static int command_status_run(command_t *self, int argc, char **argv)
         fprintf(stderr, "Error: Failed to open repository\n");
         return CMD_ERROR_EXEC_FAILED;
     }
-   printf("comand status run\n");
     int result = repository_status(repo);
     if (result != 0)
     {
@@ -232,7 +232,6 @@ static int command_status_run(command_t *self, int argc, char **argv)
     repository_free(repo);
     return result == 0 ? 0 : CMD_ERROR_EXEC_FAILED;
 }
-
 
 command_t command_status_impl = {
     .name = "status",

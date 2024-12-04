@@ -258,7 +258,6 @@ repository_t *repository_open()
         repository_free(repo);
         return NULL;
     }
-    printf("Opened repository at %s\n", repo->vcsdir);
     repo->initialized = 1;
     return repo;
 }
@@ -621,12 +620,21 @@ int repository_commit(repository_t *repo, const char *message)
 
 int repository_status(repository_t *repo) 
 {
+    if (!repo->initialized) {
+        fprintf(stderr, "Error: Repository not initialized\n");
+        return -1;
+    }
+    index_t *index = index_init(repo->index_path);
     diff_t *diff = diff_init();
-
     walk_working_dir(".", diff);
 
-    printf("commit %s\n", repo->recent_commit);
-    walk_commit_tree(repo->recent_commit, diff);
+    if (repo->recent_commit[0] != '\0') {
+        walk_commit_tree(repo->recent_commit, diff);
+    }
+    if (index->header.entry_count > 0) {
+        walk_staging(index, diff);
+    }
+  
     diff_print(diff);
 
     diff_free(diff);
