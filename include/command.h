@@ -7,7 +7,7 @@ command_t *command_init();
 command_t *command_add();
 command_t *command_commit();
 command_t *command_status();
-// command_t *log(void);
+command_t *command_log();
 
 // Advanced commands (maybe implement later)
 
