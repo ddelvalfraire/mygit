@@ -50,8 +50,7 @@ Files are tracked using a staging area system similar to Git's index. The object
 ### Design Patterns Used
 - Factory Pattern: For creating different types of objects (blobs, trees, commits)
 - Singleton Pattern: For repository and index management
-- Observer Pattern: For monitoring file system changes
-- Strategy Pattern: For different hash computation methods
+- Strategy Pattern: For hash computation methods
 
 ### Usage Example
 ```bash
